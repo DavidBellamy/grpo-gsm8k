@@ -58,5 +58,5 @@ COPY scripts/env.det.sh /etc/profile.d/env.det.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /etc/profile.d/env.det.sh
 
 # Let tini reap orphans; keep a clean PID 1
-ENTRYPOINT ["/usr/bin/tini","--","/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]
