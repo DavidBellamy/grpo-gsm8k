@@ -1,0 +1,13 @@
+.git
+.venv/
+artifacts/
+__pycache__/
+.pytest_cache/
+tests/__pycache__/
+dist/
+build/
+.dist/
+.eggs/
+*.egg-info
+*.py[cod]
+*.ipynb_checkpoints
