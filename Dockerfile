@@ -6,7 +6,9 @@ ARG DEBIAN_FRONTEND=noninteractive
 ARG UBUNTU_SNAPSHOT=20250701T000000Z
 
 # ---- Lock apt to a snapshot for reproducible OS packages ----
-RUN set -eux; \
+RUN --mount=type=cache,target=/var/lib/apt/lists \
+    --mount=type=cache,target=/var/cache/apt \
+  set -eux; \
   printf 'deb http://snapshot.ubuntu.com/ubuntu/%s jammy main restricted universe multiverse\n' "$UBUNTU_SNAPSHOT" > /etc/apt/sources.list; \
   printf 'deb http://snapshot.ubuntu.com/ubuntu/%s jammy-updates main restricted universe multiverse\n' "$UBUNTU_SNAPSHOT" >> /etc/apt/sources.list; \
   printf 'deb http://snapshot.ubuntu.com/ubuntu/%s jammy-security main restricted universe multiverse\n' "$UBUNTU_SNAPSHOT" >> /etc/apt/sources.list; \
@@ -14,10 +16,8 @@ RUN set -eux; \
   apt-get install -y --no-install-recommends \
     tzdata ca-certificates curl wget unzip git jq bash-completion \
     tmux htop \
-    python3.10 python3.10-venv python3-pip python3.10-dev build-essential pkg-config \
-    tini; \
+    python3.10 python3.10-venv python3-pip python3.10-dev build-essential pkg-config; \
   ln -snf /usr/share/zoneinfo/UTC /etc/localtime && echo UTC > /etc/timezone; \
-  rm -rf /var/lib/apt/lists/*
 
 ENV TZ=UTC \
     PYTHONUNBUFFERED=1
@@ -57,6 +57,5 @@ COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY scripts/env.det.sh /etc/profile.d/env.det.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /etc/profile.d/env.det.sh
 
-# Let tini reap orphans; keep a clean PID 1
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]
