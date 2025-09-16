@@ -53,12 +53,27 @@ if ! command -v code >/dev/null 2>&1; then
   install_vscode_cli || true
 fi
 
+# Persist VS Code CLI state (auth/server) on the volume
+mkdir -p /workspace/.vscode
+ln -sfn /workspace/.vscode /root/.vscode
+
 # Autostart tunnel if requested (set VSCODE_TUNNEL_NAME in the pod template)
 if [ -n "${VSCODE_TUNNEL_NAME:-}" ] && command -v code >/dev/null 2>&1; then
-  ( nohup code tunnel --name "$VSCODE_TUNNEL_NAME" \
-      --accept-server-license-terms --disable-telemetry \
-      >/workspace/.code-tunnel.log 2>&1 & ) || true
+  # 2) If not authenticated yet, kick off device login once (code + URL goes to the log)
+  if ! code tunnel status 2>/dev/null | grep -q '"tunnel":"Connected"'; then
+    if ! pgrep -f "code.*tunnel user login" >/dev/null 2>&1; then
+      ( nohup code tunnel user login >/workspace/.code-tunnel.log 2>&1 & ) || true
+    fi
+  fi
+
+  # 3) Start exactly one tunnel (background) and log output
+  if ! pgrep -f "code.*tunnel.*--name[ =]${VSCODE_TUNNEL_NAME}" >/dev/null 2>&1; then
+    ( nohup code tunnel --name "$VSCODE_TUNNEL_NAME" \
+        --accept-server-license-terms --disable-telemetry \
+        >/workspace/.code-tunnel.log 2>&1 & ) || true
+  fi
 fi
+i
 
 # --- Python env: prefer persistent venv on the volume; fallback to baked /opt/venv ---
 export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-/workspace/.venv}"
