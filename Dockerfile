@@ -17,10 +17,10 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
     tzdata ca-certificates curl wget unzip git jq bash-completion \
     tmux htop \
     python3.10 python3.10-venv python3-pip python3.10-dev build-essential pkg-config; \
-  ln -snf /usr/share/zoneinfo/UTC /etc/localtime && echo UTC > /etc/timezone; \
+  ln -snf /usr/share/zoneinfo/UTC /etc/localtime && echo UTC > /etc/timezone;
 
 ENV TZ=UTC \
-    PYTHONUNBUFFERED=1
+  PYTHONUNBUFFERED=1
 
 # ---- Install uv (fast package manager) ----
 # Official guidance: copy the uv binary from the uv image
@@ -58,4 +58,4 @@ COPY scripts/env.det.sh /etc/profile.d/env.det.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /etc/profile.d/env.det.sh
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["bash"]
+CMD ["sleep", "infinity"]
