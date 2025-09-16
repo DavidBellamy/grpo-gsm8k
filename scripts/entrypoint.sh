@@ -73,7 +73,6 @@ if [ -n "${VSCODE_TUNNEL_NAME:-}" ] && command -v code >/dev/null 2>&1; then
         >/workspace/.code-tunnel.log 2>&1 & ) || true
   fi
 fi
-i
 
 # --- Python env: prefer persistent venv on the volume; fallback to baked /opt/venv ---
 export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-/workspace/.venv}"
