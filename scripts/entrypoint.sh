@@ -16,7 +16,19 @@ export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME/hub}"
 export PIP_CACHE_DIR="${PIP_CACHE_DIR:-$XDG_CACHE_HOME/pip}"
 mkdir -p "$XDG_CONFIG_HOME" "$VSCODE_AGENT_FOLDER" /workspace/bin
 
-# Make the CLI available persistently
+# Keep /workspace/bin on PATH for ALL future shells (login + interactive)
+if [ ! -f /etc/profile.d/workspace-path.sh ]; then
+  cat >/etc/profile.d/workspace-path.sh <<'SH'
+# ensure /workspace/bin is on PATH even for login shells
+case ":$PATH:" in *":/workspace/bin:"*) ;; *) export PATH="/workspace/bin:$PATH" ;; esac
+SH
+fi
+# Also cover interactive non-login bash shells (VS Code terminals, etc.)
+if [ -f /etc/bash.bashrc ] && ! grep -q '/workspace/bin' /etc/bash.bashrc; then
+  echo 'case ":$PATH:" in *":/workspace/bin:"*) ;; *) export PATH="/workspace/bin:$PATH";; esac' >> /etc/bash.bashrc
+fi
+
+# Make the CLI available persistently (current process)
 export PATH="/workspace/bin:${PATH}"
 
 # --- VS Code CLI (tunnels) — install once, reuse forever ---
@@ -29,8 +41,7 @@ install_vscode_cli() {
   for os in cli-linux-x64 cli-alpine-x64; do
     url="https://code.visualstudio.com/sha/download?build=stable&os=${os}"
     echo "[entrypoint] Fetching: $url"
-    if curl -fL --retry 3 --retry-delay 2 --retry-connrefused \
-         -o "$tmp/cli.tgz" "$url"; then
+    if curl -fL --retry 3 --retry-delay 2 --retry-connrefused -o "$tmp/cli.tgz" "$url"; then
       # Quick sanity check: is it a gzip tar?
       if tar -tzf "$tmp/cli.tgz" >/dev/null 2>&1; then
         tar -xzf "$tmp/cli.tgz" -C "$tmp"
@@ -51,6 +62,11 @@ install_vscode_cli() {
 
 if ! command -v code >/dev/null 2>&1; then
   install_vscode_cli || true
+fi
+
+# Belt-and-suspenders: expose code via standard PATH dir too
+if [ -x /workspace/bin/code ]; then
+  ln -sfn /workspace/bin/code /usr/local/bin/code
 fi
 
 # Persist VS Code CLI state (auth/server) on the volume
