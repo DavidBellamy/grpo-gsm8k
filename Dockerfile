@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
   apt-get install -y --no-install-recommends \
     tzdata ca-certificates curl wget unzip git jq bash-completion \
     tmux htop \
-    python3.10 python3.10-venv python3-pip python3.10-dev build-essential pkg-config; \
+    python3.10 python3.10-venv python3-pip; \
   ln -snf /usr/share/zoneinfo/UTC /etc/localtime && echo UTC > /etc/timezone;
 
 ENV TZ=UTC \
@@ -32,18 +32,8 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uvx /usr/local/bin/uvx
 ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
-    UV_PROJECT_ENVIRONMENT=/opt/venv \
-    PATH="/opt/venv/bin:${PATH}"
-
-# ---- Preinstall heavy deps via uv using your lockfile ----
-# Copy only pyproject/lock so Docker layer-caches deps installs.
-# (We do NOT copy source code; it will come from the mounted volume.)
-WORKDIR /image-deps
-COPY pyproject.toml uv.lock ./
-# If you rely on the PyTorch cu128 index, pyproject must declare it; see below.
-RUN python3.10 -m venv /opt/venv
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --no-dev
+    UV_PROJECT_ENVIRONMENT=/workspace/.venv \
+    PATH="/workspace/.venv/bin:${PATH}"
 
 # ---- Runtime defaults for (fast) determinism knobs ----
 ENV TOKENIZERS_PARALLELISM=false \

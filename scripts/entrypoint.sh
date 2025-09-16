@@ -62,14 +62,20 @@ fi
 
 # --- Python env: prefer persistent venv on the volume; fallback to baked /opt/venv ---
 export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-/workspace/.venv}"
+export PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"   # make sure venv bins are on PATH even before activate
 
 if [ ! -x "$UV_PROJECT_ENVIRONMENT/bin/python" ]; then
   echo "[entrypoint] Creating persistent venv at $UV_PROJECT_ENVIRONMENT"
   uv venv "$UV_PROJECT_ENVIRONMENT"
   # If a project exists in /workspace, hydrate deps (non-frozen for dev iteration)
   if [ -f /workspace/pyproject.toml ]; then
-    echo "[entrypoint] Syncing Python deps with uv (dev mode)"
-    uv sync || true
+    if [ -f /workspace/uv.lock ]; then
+      echo "[entrypoint] Syncing deps from uv.lock (frozen, no-dev)"
+      uv sync --frozen --no-dev || true
+    else
+      echo "[entrypoint] Syncing deps from pyproject (no-dev)"
+      uv sync --no-dev || true
+    fi
   fi
 fi
 
