@@ -145,6 +145,8 @@ uv lock --python 3.10
 
 ### Build the image (optional)
 
+Note: it is much quicker to build the image and push it to GHCR on a GitHub runner via GitHub Actions.
+
 ```bash
 # Generic build (host arch)
 docker build -t grpo-gsm8k .
