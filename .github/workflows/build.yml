@@ -31,12 +31,6 @@ jobs:
       - name: Compute lowercase owner
         run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> $GITHUB_ENV
 
-      # (Optional) clear any preexisting Docker bits on the VM
-      - name: Free disk (light)
-        run: |
-          docker system prune -af || true
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY" || true
-
       - name: Set up Buildx (tiny local store, auto-cleanup)
         uses: docker/setup-buildx-action@v3
         with:
