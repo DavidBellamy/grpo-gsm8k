@@ -20,12 +20,37 @@ mkdir -p "$XDG_CONFIG_HOME" "$VSCODE_AGENT_FOLDER" /workspace/bin
 export PATH="/workspace/bin:${PATH}"
 
 # --- VS Code CLI (tunnels) — install once, reuse forever ---
-if ! command -v code >/dev/null 2>&1; then
+install_vscode_cli() {
   echo "[entrypoint] Installing VS Code CLI..."
-  if ! curl -fsSL "https://code.visualstudio.com/sha/download?build=stable&os=cli-linux-x64" \
-      | tar -xz --strip-components=1 -C /workspace/bin */bin/code; then
-    echo "[entrypoint] VS Code CLI install failed; continuing without it."
-  fi
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+
+  # Try glibc build first, then musl (Alpine)
+  for os in cli-linux-x64 cli-alpine-x64; do
+    url="https://code.visualstudio.com/sha/download?build=stable&os=${os}"
+    echo "[entrypoint] Fetching: $url"
+    if curl -fL --retry 3 --retry-delay 2 --retry-connrefused \
+         -o "$tmp/cli.tgz" "$url"; then
+      # Quick sanity check: is it a gzip tar?
+      if tar -tzf "$tmp/cli.tgz" >/dev/null 2>&1; then
+        tar -xzf "$tmp/cli.tgz" -C "$tmp"
+        # Find the 'code' binary anywhere in the archive
+        bin_path="$(find "$tmp" -type f -name code -perm -u+x | head -n1 || true)"
+        if [ -n "${bin_path:-}" ]; then
+          install -m 0755 "$bin_path" /workspace/bin/code
+          echo "[entrypoint] VS Code CLI installed: $(/workspace/bin/code --version | head -n1)"
+          return 0
+        fi
+      fi
+    fi
+  done
+
+  echo "[entrypoint] VS Code CLI install failed; continuing without it."
+  return 1
+}
+
+if ! command -v code >/dev/null 2>&1; then
+  install_vscode_cli || true
 fi
 
 # Autostart tunnel if requested (set VSCODE_TUNNEL_NAME in the pod template)
@@ -60,5 +85,5 @@ fi
 # Work from the mounted volume by default
 cd /workspace
 
-# Hand off to the actual command (tini will reap as PID 1)
+# Hand off to the actual command
 exec "$@"
