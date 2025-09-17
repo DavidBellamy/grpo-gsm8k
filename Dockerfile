@@ -14,13 +14,16 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
   printf 'deb http://snapshot.ubuntu.com/ubuntu/%s jammy-security main restricted universe multiverse\n' "$UBUNTU_SNAPSHOT" >> /etc/apt/sources.list; \
   apt-get update && \
   apt-get install -y --no-install-recommends \
-    tzdata ca-certificates curl wget unzip git jq bash-completion \
+    build-essential tzdata ca-certificates curl wget unzip git jq bash-completion \
     tmux htop \
-    python3.10 python3.10-venv python3-pip; \
+    python3.10 python3.10-venv python3-pip python3.10-dev; \
   ln -snf /usr/share/zoneinfo/UTC /etc/localtime && echo UTC > /etc/timezone;
 
 ENV TZ=UTC \
-  PYTHONUNBUFFERED=1
+  PYTHONUNBUFFERED=1 \
+  # toolchain hint for Triton/vLLM
+  CC=gcc \
+  CXX=g++
 
 # ---- Install uv (fast package manager) ----
 # Official guidance: copy the uv binary from the uv image
