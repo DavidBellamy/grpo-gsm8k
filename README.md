@@ -43,16 +43,18 @@ The container is provider-agnostic. For RunPod specifically:
 3. **Edit the pod template's env vars**:
 
    ```bash
-   VSCODE_TUNNEL_NAME=runpod-gpu                 # optional: VS Code tunnel name
-   XDG_CONFIG_HOME=/workspace/.config            # persist tunnel auth
-   VSCODE_AGENT_FOLDER=/workspace/.vscode-server # persist VS Code server
-   UV_PROJECT_ENVIRONMENT=/workspace/.venv       # persistent venv for uv
-   XDG_CACHE_HOME=/workspace/.cache              # share caches on the volume
-   HF_HOME=/workspace/.cache/huggingface
-   TRANSFORMERS_CACHE=/workspace/.cache/huggingface/hub
-   PIP_CACHE_DIR=/workspace/.cache/pip
-   WANDB_MODE=offline                            # set WANDB_API_KEY via a secret if you need online logging
+  VSCODE_TUNNEL_NAME=runpod-gpu
+  XDG_CONFIG_HOME=/workspace/.config
+  VSCODE_AGENT_FOLDER=/workspace/.vscode-server
+  UV_PROJECT_ENVIRONMENT=/workspace/.venv
+  XDG_CACHE_HOME=/workspace/.cache
+  HF_HOME=/workspace/.cache/huggingface
+  PIP_CACHE_DIR=/workspace/.cache/pip
+  GIT_CONFIG_GLOBAL=/workspace/dotfiles/gitconfig
    ```
+
+  
+
 4. **Secrets**: store `WANDB_API_KEY` as a secret (don’t expose as plain env var).
 5. **Command**: default `bash` is fine; the image’s `entrypoint.sh` will:
 

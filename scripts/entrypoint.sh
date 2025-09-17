@@ -15,14 +15,13 @@ mkdir -p /workspace
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/workspace/.config}"
 export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/workspace/.cache}"
 export HF_HOME="${HF_HOME:-$XDG_CACHE_HOME/huggingface}"
-export TRANSFORMERS_CACHE="${TRANSFORMERS_CACHE:-$HF_HOME/hub}"
 export PIP_CACHE_DIR="${PIP_CACHE_DIR:-$XDG_CACHE_HOME/pip}"
 
 export VSCODE_CLI_DATA_DIR="${VSCODE_CLI_DATA_DIR:-/workspace/.vscode-cli}"
 export VSCODE_CLI_USE_FILE_KEYCHAIN="${VSCODE_CLI_USE_FILE_KEYCHAIN:-1}"
 export VSCODE_AGENT_FOLDER="${VSCODE_AGENT_FOLDER:-/workspace/.vscode-server}"
 
-mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$HF_HOME" "$TRANSFORMERS_CACHE" "$PIP_CACHE_DIR"
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$HF_HOME" "$PIP_CACHE_DIR"
 mkdir -p "$VSCODE_CLI_DATA_DIR" "$VSCODE_AGENT_FOLDER" /workspace/bin
 
 # Keep /workspace/bin on PATH for ALL future shells (login + interactive)
