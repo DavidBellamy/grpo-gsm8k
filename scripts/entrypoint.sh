@@ -10,6 +10,9 @@ log() { printf '[entrypoint] %s\n' "$*"; }
 # Ensure workspace exists (your volume usually mounts here)
 mkdir -p /workspace
 
+# Ensure DATA_DIR exists if set (for dataset snapshots, etc.)
+mkdir -p "$DATA_DIR"
+
 # --- Persistent caches & VS Code server/CLI on your Network Volume ---
 # These ENV are also set in the Dockerfile so all processes see them. We ensure dirs exist here.
 export XDG_CONFIG_HOME="${XDG_CONFIG_HOME:-/workspace/.config}"

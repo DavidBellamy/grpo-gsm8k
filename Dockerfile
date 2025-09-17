@@ -36,7 +36,7 @@ ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1 \
     UV_PYTHON_DOWNLOADS=never \
     UV_PROJECT_ENVIRONMENT=/workspace/.venv \
-    PATH="/workspace/.venv/bin:${PATH}"
+    PATH="/workspace/.venv/bin:${PATH}" \
     DATA_DIR=/workspace/data
 
 # ---- Runtime defaults for (fast) determinism knobs ----
@@ -63,7 +63,6 @@ RUN set -eux; \
 
 # ---- Place helpers (no source code baked) ----
 WORKDIR /workspace
-RUN mkdir -p /workspace/data
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY scripts/env.det.sh /etc/profile.d/env.det.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /etc/profile.d/env.det.sh
