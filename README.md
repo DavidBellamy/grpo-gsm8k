@@ -32,7 +32,7 @@ This will:
 * prepare GSM8K JSONL files to `artifacts/gsm8k/`
 * run a vLLM eval and write to `artifacts/baselines/`
 
-> **GPU required** for evaluation. On macOS (Apple Silicon), run this on a remote GPU host/provider (e.g., RunPod) rather than locally.
+> **GPU required** for evaluation.
 
 ---
 
