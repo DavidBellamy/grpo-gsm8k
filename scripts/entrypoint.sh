@@ -25,6 +25,13 @@ export VSCODE_AGENT_FOLDER="${VSCODE_AGENT_FOLDER:-/workspace/.vscode-server}"
 mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$HF_HOME" "$TRANSFORMERS_CACHE" "$PIP_CACHE_DIR"
 mkdir -p "$VSCODE_CLI_DATA_DIR" "$VSCODE_AGENT_FOLDER" /workspace/bin
 
+# If the volume was created by a different UID last time, fix ownership/perms now
+if [ -d "$VSCODE_CLI_DATA_DIR" ]; then
+  chown -R "$(id -u)":"$(id -g)" "$VSCODE_CLI_DATA_DIR" || true
+  chmod 700 "$VSCODE_CLI_DATA_DIR" || true
+  find "$VSCODE_CLI_DATA_DIR" -type f -name '*.json' -exec chmod 600 {} \; || true
+fi
+
 # Keep /workspace/bin on PATH for ALL future shells (login + interactive)
 if [ ! -f /etc/profile.d/workspace-path.sh ]; then
   cat >/etc/profile.d/workspace-path.sh <<'SH'
