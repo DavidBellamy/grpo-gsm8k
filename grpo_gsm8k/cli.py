@@ -113,7 +113,7 @@ def cmd_eval(args: argparse.Namespace) -> None:
             "export",
             "--format",
             "requirements-txt",
-            "--strict",
+            "--frozen",
             "--output-file",
             str(run_dir / "locks" / "requirements.lock.txt"),
         ]
