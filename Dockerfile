@@ -47,17 +47,12 @@ ENV VSCODE_CLI_DATA_DIR=/workspace/.vscode-cli \
     VSCODE_AGENT_FOLDER=/workspace/.vscode-server
 
 # ---- (Optional) Install VS Code CLI at build time ----
-# To pin, pass --build-arg VSCODE_COMMIT=<vscode-commit-hash>
+# Pin with VSCODE_VERSION=<version or commit> or leave as "latest"
 ARG VSCODE_CLI_OS=cli-linux-x64
-ARG VSCODE_COMMIT=
+ARG VSCODE_VERSION=latest
 RUN set -eux; \
-  mkdir -p /usr/local/bin; \
-  if [ -n "$VSCODE_COMMIT" ]; then \
-    URL="https://update.code.visualstudio.com/commit:${VSCODE_COMMIT}/${VSCODE_CLI_OS}/stable"; \
-  else \
-    URL="https://code.visualstudio.com/sha/download?build=stable&os=${VSCODE_CLI_OS}"; \
-  fi; \
-  curl -fsSL "$URL" -o /tmp/cli.tgz; \
+  url="https://update.code.visualstudio.com/${VSCODE_VERSION}/${VSCODE_CLI_OS}/stable"; \
+  curl -fsSL "$url" -o /tmp/cli.tgz; \
   tar -xzf /tmp/cli.tgz -C /tmp; \
   install -m 0755 "$(find /tmp -type f -name code -perm -u+x | head -n1)" /usr/local/bin/code; \
   rm -rf /tmp/cli.tgz /tmp/*

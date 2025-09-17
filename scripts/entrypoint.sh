@@ -39,12 +39,12 @@ fi
 # Make the CLI available in this process immediately
 case ":$PATH:" in *":/workspace/bin:"*) ;; *) export PATH="/workspace/bin:$PATH";; esac
 
-# --- VS Code CLI fallback install (image already installs it; this is belt-and-suspenders) ---
+# --- VS Code CLI fallback install (image already installs it; this is a backup) ---
 if ! command -v code >/dev/null 2>&1; then
   log "VS Code CLI not found, attempting runtime install..."
   tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
   for os in cli-linux-x64 cli-alpine-x64; do
-    url="https://code.visualstudio.com/sha/download?build=stable&os=${os}"
+    url="https://update.code.visualstudio.com/latest/${os}/stable"
     log "Fetching: $url"
     if curl -fsSL -o "$tmp/cli.tgz" "$url" && tar -tzf "$tmp/cli.tgz" >/dev/null 2>&1; then
       tar -xzf "$tmp/cli.tgz" -C "$tmp"
