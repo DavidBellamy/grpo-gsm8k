@@ -41,6 +41,27 @@ ENV TOKENIZERS_PARALLELISM=false \
     # Fast math by default (flip at run-time if you want strict determinism)
     NVIDIA_TF32_OVERRIDE=1
 
+# ---- VS Code tunnel persistence (auth & server live on /workspace) ----
+ENV VSCODE_CLI_DATA_DIR=/workspace/.vscode-cli \
+    VSCODE_CLI_USE_FILE_KEYCHAIN=1 \
+    VSCODE_AGENT_FOLDER=/workspace/.vscode-server
+
+# ---- (Optional) Install VS Code CLI at build time ----
+# To pin, pass --build-arg VSCODE_COMMIT=<vscode-commit-hash>
+ARG VSCODE_CLI_OS=cli-linux-x64
+ARG VSCODE_COMMIT=
+RUN set -eux; \
+  mkdir -p /usr/local/bin; \
+  if [ -n "$VSCODE_COMMIT" ]; then \
+    URL="https://update.code.visualstudio.com/commit:${VSCODE_COMMIT}/${VSCODE_CLI_OS}/stable"; \
+  else \
+    URL="https://code.visualstudio.com/sha/download?build=stable&os=${VSCODE_CLI_OS}"; \
+  fi; \
+  curl -fsSL "$URL" -o /tmp/cli.tgz; \
+  tar -xzf /tmp/cli.tgz -C /tmp; \
+  install -m 0755 "$(find /tmp -type f -name code -perm -u+x | head -n1)" /usr/local/bin/code; \
+  rm -rf /tmp/cli.tgz /tmp/*
+
 # ---- Place helpers (no source code baked) ----
 WORKDIR /workspace
 COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
