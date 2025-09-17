@@ -120,8 +120,11 @@ def cmd_eval(args: argparse.Namespace) -> None:
     )
 
     # 6) Snapshot any external data directory for provenance
-    data_dir = os.environ.get("DATA_DIR", "/data")
-    _sh(["bash", "scripts/snapshot_dataset.sh", data_dir, str(run_dir)])
+    data_dir = os.environ.get("DATA_DIR", None)
+    if data_dir is not None and os.path.exists(data_dir):
+        _sh(["bash", "scripts/snapshot_dataset.sh", data_dir, str(run_dir)])
+    else:
+        print("DATA_DIR not set or does not exist; skipping dataset snapshot")
 
 
 def main() -> None:
