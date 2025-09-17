@@ -53,7 +53,13 @@ The container is provider-agnostic. For RunPod specifically:
   GIT_CONFIG_GLOBAL=/workspace/dotfiles/gitconfig
    ```
 
-  
+On the first pod you deploy, run:
+```bash
+  git config -f /workspace/dotfiles/gitconfig user.name "your_name"
+  git config -f /workspace/dotfiles/gitconfig user.email "123456+youruser@users.noreply.github.com"
+  git config -f /workspace/dotfiles/gitconfig user.useConfigOnly true
+```
+
 
 4. **Secrets**: store `WANDB_API_KEY` as a secret (don’t expose as plain env var).
 5. **Command**: default `bash` is fine; the image’s `entrypoint.sh` will:
