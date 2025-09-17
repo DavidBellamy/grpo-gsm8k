@@ -1,5 +1,7 @@
 # Simple RL for Math Reasoning
 
+⚠️ This ReadMe is under construction so it might contain some mistakes. More soon!
+
 This repo contains RL-style fine-tuning & evaluation scaffolding for math reasoning, e.g. GSM8K. It is LoRA-friendly but will also have full fine-tuning code as well. It is meant for models that fit on a single node (i.e. 8 GPUs).
 Includes: **reproducible containers**, **determinism toggles**, **dataset pinning/snapshots**, and a **vLLM baseline eval**.
 
