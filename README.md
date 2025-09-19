@@ -36,6 +36,26 @@ This will:
 
 ---
 
+## Generate DeepSeek R1 Reasoning Traces
+
+We generate DeepSeek R1 reasoning traces for problems in the GSM8k train set via DeepSeek's official API. You need to create an account and get your API key. This command can be run locally:
+
+```bash
+export DEEPSEEK_API_KEY=...
+
+uv run --no-project --with aiohttp \
+  python grpo_gsm8k/r1_traces.py \
+    --infile artifacts/gsm8k/train.jsonl \
+    --outfile artifacts/deepseek_r1_gsm8k_traces.jsonl \
+    --concurrency 4 \
+    --max-tokens 2048 \
+    --max-retries 5 \
+    --offpeak 0.25 \
+    --limit 5
+```
+
+---
+
 ## Run on RunPod (provider notes)
 
 The container is provider-agnostic. For RunPod specifically:
