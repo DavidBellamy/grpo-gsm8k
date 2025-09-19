@@ -1,3 +1,4 @@
+import argparse
 import json
 import random
 from pathlib import Path
@@ -69,5 +70,64 @@ def main(
         ).save_to_disk(snapshot_dir)
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Prepare GSM8K train/val/test splits.")
+    parser.add_argument(
+        "--out-dir",
+        default="artifacts/gsm8k",
+        dest="out_dir",
+        help="Output directory for JSONL files (default: artifacts/gsm8k).",
+    )
+    parser.add_argument(
+        "--seed", type=int, default=SEED, help=f"Random seed for sampling (default: {SEED})."
+    )
+    parser.add_argument(
+        "--eval-n",
+        type=int,
+        default=512,
+        dest="eval_n",
+        help="Number of eval (val) examples sampled from train (default: 512).",
+    )
+    parser.add_argument(
+        "--revision", default="main", help='Dataset revision/branch/tag/commit (default: "main").'
+    )
+    parser.add_argument(
+        "--cache-dir",
+        default="/workspace/.cache/huggingface",
+        dest="cache_dir",
+        help="HF datasets cache dir (default: /workspace/.cache/huggingface).",
+    )
+    parser.add_argument(
+        "--snapshot-dir",
+        default="artifacts/gsm8k_hf_snapshot",
+        dest="snapshot_dir",
+        help="Directory to save HuggingFace snapshot (default: artifacts/gsm8k_hf_snapshot).",
+    )
+    grp = parser.add_mutually_exclusive_group()
+    grp.add_argument(
+        "--snapshot",
+        dest="snapshot",
+        action="store_true",
+        help="Save a HF DatasetDict snapshot to disk (default).",
+    )
+    grp.add_argument(
+        "--no-snapshot",
+        dest="snapshot",
+        action="store_false",
+        help="Do not save a HF snapshot to disk.",
+    )
+    parser.set_defaults(snapshot=True)
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(
+        out_dir=args.out_dir,
+        seed=args.seed,
+        eval_n=args.eval_n,
+        revision=args.revision,
+        cache_dir=args.cache_dir,
+        make_hf_snapshot=args.snapshot,
+        snapshot_dir=args.snapshot_dir,
+    )

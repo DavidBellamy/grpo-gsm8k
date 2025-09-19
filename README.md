@@ -105,7 +105,7 @@ Then exec into the pod or use the tunnel and run the same command as in **Quicks
 ```bash
 python -m grpo_gsm8k.cli eval \
   --model_id "Qwen/Qwen2.5-7B-Instruct" \
-  --eval_path "artifacts/gsm8k/test_eval.jsonl" \
+  --eval_path "artifacts/gsm8k/val.jsonl" \
   --limit 800 \
   --max_new_tokens 384 \
   --gpu_mem_util 0.92 \
@@ -140,7 +140,7 @@ PY
 ```bash
 python -m grpo_gsm8k.fast_eval_vllm \
   --model_id Qwen/Qwen2.5-7B-Instruct \
-  --eval_path artifacts/gsm8k/test_eval.jsonl \
+  --eval_path artifacts/gsm8k/val.jsonl \
   --limit 200 \
   --max_new_tokens 384 \
   --gpu_mem_util 0.92
@@ -211,7 +211,7 @@ docker push ghcr.io/<GITHUB_USERNAME>/grpo-gsm8k:latest
   * `run_manifest.json` — environment + package versions
   * `locks/requirements.lock.txt` — exact deps used (`uv export --strict`)
   * `data.sha256` — checksums for `/data` (from `scripts/snapshot_dataset.sh`)
-* **Datasets:** `artifacts/gsm8k/{train,test_full,test_eval}.jsonl` and optional HF snapshot `artifacts/gsm8k_hf_snapshot/`
+* **Datasets:** `artifacts/gsm8k/{train,test,val}.jsonl` and optional HF snapshot `artifacts/gsm8k_hf_snapshot/`
 * **Baselines:** `artifacts/baselines/*.jsonl` — inputs, model outputs, reward, gold
 
 **Determinism toggles**
