@@ -28,7 +28,7 @@ Args:
     --max-tokens     Max tokens per DeepSeek completion (default: 2048)
     --max-retries    Max retries per sample (default: 5)
     --offpeak        Optional discount multiplier for DeepSeek off-peak (e.g., 0.25 for 75% off)
-    --limit          Max number of *unique* prompts to send to DeepSeek API (default: 5)
+    --limit          Max number of *unique* prompts to send to DeepSeek API (default: None)
     --samples-per-prompt  Number of R1 responses to collect per prompt (default: 1)
 
 Env vars:
@@ -258,7 +258,7 @@ async def main() -> None:
         help="Optional discount multiplier for DeepSeek off-peak (e.g., 0.25 for 75% off)",
     )
     parser.add_argument(
-        "--limit", type=int, default=5, help="Max number of prompts to send to DeepSeek API"
+        "--limit", type=int, default=None, help="Max number of prompts to send to DeepSeek API"
     )
     args = parser.parse_args()
 
