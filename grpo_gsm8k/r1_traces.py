@@ -135,7 +135,7 @@ async def worker(
     queue: asyncio.Queue,
     session: aiohttp.ClientSession,
     args: argparse.Namespace,
-    seen_ids: set,
+    seen_ids: set[str],
     outfile: Path,
     manifest: dict[str, Any],
     stats: dict[str, Any],
@@ -148,6 +148,12 @@ async def worker(
             queue.task_done()
             break
         entry_id, q, gold = item
+
+        # Skip if already processed (extra safety)
+        if entry_id in seen_ids:
+            queue.task_done()
+            continue
+
         t0 = time.time()
         tries = 0
         while True:
@@ -183,10 +189,14 @@ async def worker(
                     "latency_sec": round(time.time() - t0, 3),
                     "ts_utc": datetime.now(timezone.utc).isoformat(),
                     "run_id": manifest["run_id"],
+                    "worker": name,  # identify which worker handled it
                 }
 
                 with outfile.open("a", encoding="utf-8") as f:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+                # Mark as seen after successful write
+                seen_ids.add(entry_id)
 
                 # Update global stats
                 stats["n_done"] += 1
@@ -207,6 +217,7 @@ async def worker(
                         "error": str(e)[:500],
                         "ts_utc": datetime.now(timezone.utc).isoformat(),
                         "run_id": manifest["run_id"],
+                        "worker": name,  # include worker in failure log too
                     }
                     with outfile.open("a", encoding="utf-8") as f:
                         f.write(json.dumps(rec, ensure_ascii=False) + "\n")
