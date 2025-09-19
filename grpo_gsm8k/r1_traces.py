@@ -47,6 +47,12 @@ from typing import Any
 
 import aiohttp
 
+from grpo_gsm8k.reward_fn import (
+    extract_answer_colon,
+    normalize_number,
+    reward_from_text,
+)
+
 # --------------------------- Pricing (USD per 1M tokens) ---------------------------
 PRICES = {
     "deepseek": {
@@ -176,14 +182,28 @@ async def worker(
 
                 usage_summary = summarize_usage(usage, args.offpeak)
 
+                # Parse gold numeric answer from GSM8K "#### <number>" suffix
+                gold_tail = gold.split("####")[-1] if "####" in gold else gold
+                gold_number = normalize_number(gold_tail)
+
+                # Parse R1 numeric answer from "ANSWER: <number>"
+                pred_src = extract_answer_colon(final)
+                final_number = normalize_number(pred_src)
+
+                # 1/0 correctness using the 'answer' parser (R1 format)
+                correct = int(reward_from_text(final, gold, parser="answer"))
+
                 rec = {
                     "id": entry_id,
                     "question": q,
                     "gold_answer": gold,
+                    "gold_number": gold_number,
                     "model": "deepseek-reasoner",
                     "provider": "deepseek",
                     "reasoning": reasoning,
                     "final": final,
+                    "final_number": final_number,
+                    "correct": correct,
                     "usage": usage_summary,
                     "raw_usage": usage,
                     "latency_sec": round(time.time() - t0, 3),

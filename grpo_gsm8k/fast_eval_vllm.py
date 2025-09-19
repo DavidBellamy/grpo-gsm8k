@@ -54,7 +54,7 @@ def main(
     outputs = llm.generate(prompts, sp, use_tqdm=True)
     texts = [o.outputs[0].text for o in outputs]
 
-    rewards = [reward_from_text(o, d["answer"]) for o, d in zip(texts, data)]
+    rewards = [reward_from_text(o, d["answer"], "boxed") for o, d in zip(texts, data)]
     mean = sum(rewards) / len(rewards)
     print(f"vLLM pass@1: {mean:.3f} on n={len(rewards)}")
 
