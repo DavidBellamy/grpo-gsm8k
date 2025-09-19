@@ -15,7 +15,7 @@ Usage:
     DEEPSEEK_API_KEY=... python generate_r1_gsm8k.py \
         --infile artifacts/gsm8k/train.jsonl \
         --outfile artifacts/deepseek_r1_gsm8k_traces.jsonl \
-        --concurrency 4 \
+        --concurrency 52 \
         --max-tokens 2048 \
         --max-retries 5 \
         --offpeak 0.25 \
@@ -24,7 +24,7 @@ Usage:
 Args:
     --infile         Path to input JSONL file (default: artifacts/gsm8k/train.jsonl)
     --outfile        Path to output JSONL file (default: artifacts/deepseek_r1_gsm8k_traces.jsonl)
-    --concurrency    Number of concurrent API requests (default: 4)
+    --concurrency    Number of concurrent API requests (default: 52)
     --max-tokens     Max tokens per DeepSeek completion (default: 2048)
     --max-retries    Max retries per sample (default: 5)
     --offpeak        Optional discount multiplier for DeepSeek off-peak (e.g., 0.25 for 75% off)
@@ -162,97 +162,78 @@ async def worker(
         if item is None:
             queue.task_done()
             break
-        entry_id, q, gold = item
-
-        # How many samples already collected for this id?
-        already = seen_counts.get(entry_id, 0)
-        if already >= args.samples_per_prompt:
-            queue.task_done()
-            continue
+        entry_id, q, gold, sample_idx = item
 
         # Pre-parse gold once (GSM8K '#### <number>' tail)
         gold_tail = gold.split("####")[-1] if isinstance(gold, str) and "####" in gold else gold
         gold_number = normalize_number(gold_tail)
 
-        # Collect remaining samples for this prompt
-        for sample_idx in range(already, args.samples_per_prompt):
-            tries = 0
-            while True:
-                tries += 1
-                t0 = time.time()
-                try:
-                    # Build a simple prompt. R1 auto-thinks; we request final numeric as
-                    # ANSWER: <number>
-                    prompt = (
-                        "Solve the math word problem. Show your reasoning.\n"
-                        "At the very end, output the final numeric answer alone on its own line "
-                        "as: ANSWER: <number>\n\n"
-                        f"Problem: {q}\n"
-                    )
+        tries = 0
+        while True:
+            tries += 1
+            t0 = time.time()
+            try:
+                prompt = (
+                    "Solve the math word problem. Show your reasoning.\n"
+                    "At the very end, output the final numeric answer alone on its own line "
+                    "as: ANSWER: <number>\n\n"
+                    f"Problem: {q}\n"
+                )
+                data = await call_deepseek(session, api_key, prompt, args.max_tokens)
+                choice = data["choices"][0]["message"]
+                reasoning = choice.get("reasoning_content", "")
+                final = choice.get("content", "")
+                usage = data.get("usage", {})
 
-                    data = await call_deepseek(session, api_key, prompt, args.max_tokens)
-                    choice = data["choices"][0]["message"]
-                    reasoning = choice.get("reasoning_content", "")
-                    final = choice.get("content", "")
-                    usage = data.get("usage", {})
+                usage_summary = summarize_usage(usage, args.offpeak)
+                pred_src = extract_answer_colon(final)
+                final_number = normalize_number(pred_src)
+                correct = int(reward_from_text(final, gold, parser="answer"))
 
-                    usage_summary = summarize_usage(usage, args.offpeak)
+                rec = {
+                    "id": entry_id,
+                    "sample_index": sample_idx,
+                    "question": q,
+                    "gold_answer": gold,
+                    "gold_number": gold_number,
+                    "model": "deepseek-reasoner",
+                    "provider": "deepseek",
+                    "reasoning": reasoning,
+                    "final": final,
+                    "final_number": final_number,
+                    "correct": correct,
+                    "usage": usage_summary,
+                    "raw_usage": usage,
+                    "latency_sec": round(time.time() - t0, 3),
+                    "ts_utc": datetime.now(timezone.utc).isoformat(),
+                    "run_id": manifest["run_id"],
+                    "worker": name,
+                }
+                with outfile.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
-                    # Parse R1 numeric answer from "ANSWER: <number>"
-                    pred_src = extract_answer_colon(final)
-                    final_number = normalize_number(pred_src)
-
-                    # 1/0 correctness using the 'answer' parser (R1 format)
-                    correct = int(reward_from_text(final, gold, parser="answer"))
-
-                    rec = {
-                        "id": entry_id,
-                        "sample_index": sample_idx,
-                        "question": q,
-                        "gold_answer": gold,
-                        "gold_number": gold_number,
-                        "model": "deepseek-reasoner",
-                        "provider": "deepseek",
-                        "reasoning": reasoning,
-                        "final": final,
-                        "final_number": final_number,
-                        "correct": correct,
-                        "usage": usage_summary,
-                        "raw_usage": usage,
-                        "latency_sec": round(time.time() - t0, 3),
-                        "ts_utc": datetime.now(timezone.utc).isoformat(),
-                        "run_id": manifest["run_id"],
-                        "worker": name,
-                    }
-
-                    with outfile.open("a", encoding="utf-8") as f:
-                        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-
-                    # Update resume state and global stats
-                    seen_counts[entry_id] = sample_idx + 1
-                    stats["n_done"] += 1  # count responses
-                    stats["prompt_tokens"] += usage_summary["prompt_tokens"]
-                    stats["completion_tokens"] += usage_summary["completion_tokens"]
-                    stats["cost_usd"] += usage_summary["estimated_cost_usd"]
-                    break  # success for this sample
-
-                except Exception as e:
-                    if tries <= args.max_retries:
-                        await backoff_sleep(tries)
-                        continue
-                    # Log a failure record (keeps place; doesn't advance seen_counts)
-                    rec = {
-                        "id": entry_id,
-                        "sample_index": sample_idx,
-                        "error": str(e)[:500],
-                        "ts_utc": datetime.now(timezone.utc).isoformat(),
-                        "run_id": manifest["run_id"],
-                        "worker": name,
-                    }
-                    with outfile.open("a", encoding="utf-8") as f:
-                        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                    break  # give up on this sample
-
+                # Update resume state and stats
+                seen_counts[entry_id] = max(seen_counts.get(entry_id, 0), sample_idx + 1)
+                stats["n_done"] += 1
+                stats["prompt_tokens"] += usage_summary["prompt_tokens"]
+                stats["completion_tokens"] += usage_summary["completion_tokens"]
+                stats["cost_usd"] += usage_summary["estimated_cost_usd"]
+                break
+            except Exception as e:
+                if tries <= args.max_retries:
+                    await backoff_sleep(tries)
+                    continue
+                rec = {
+                    "id": entry_id,
+                    "sample_index": sample_idx,
+                    "error": str(e)[:500],
+                    "ts_utc": datetime.now(timezone.utc).isoformat(),
+                    "run_id": manifest["run_id"],
+                    "worker": name,
+                }
+                with outfile.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                break
         queue.task_done()
 
 
@@ -260,7 +241,7 @@ async def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--infile", type=str, default="artifacts/gsm8k/train.jsonl")
     parser.add_argument("--outfile", type=str, default="artifacts/deepseek_r1_gsm8k_traces.jsonl")
-    parser.add_argument("--concurrency", type=int, default=4)
+    parser.add_argument("--concurrency", type=int, default=52)
     parser.add_argument("--max-tokens", type=int, default=2048, dest="max_tokens")
     parser.add_argument("--max-retries", type=int, default=5, dest="max_retries")
     parser.add_argument(
@@ -314,6 +295,7 @@ async def main() -> None:
     queue: asyncio.Queue = asyncio.Queue()
     total = 0
     added = 0
+    tasks_enqueued = 0
     with infile.open("r", encoding="utf-8") as f:
         for line in f:
             if not line.strip():
@@ -330,12 +312,15 @@ async def main() -> None:
                 continue
             if args.limit is not None and added >= args.limit:
                 break
-            await queue.put((_id, q, a))
+            already = seen.get(_id, 0)
+            for sample_idx in range(already, args.samples_per_prompt):
+                await queue.put((_id, q, a, sample_idx))
+                tasks_enqueued += 1
             added += 1
 
     # Stats
     already_done_samples = sum(seen.values())
-    total_expected_samples = total * args.samples_per_prompt
+    total_expected_samples = tasks_enqueued + already_done_samples
     stats = {
         "n_total_in_file": total,  # prompts
         "n_already_done": already_done_samples,  # samples
@@ -346,6 +331,8 @@ async def main() -> None:
         "cost_usd": 0.0,
         "limit": args.limit,
         "samples_per_prompt": args.samples_per_prompt,
+        "prompts_enqueued_this_run": added,
+        "tasks_enqueued_this_run": tasks_enqueued,
     }
 
     # Write manifest now
@@ -375,7 +362,7 @@ async def main() -> None:
                 last = time.time()
                 print(
                     f"[{datetime.now().strftime('%H:%M:%S')}] "
-                    f"samples_done={stats['n_done']} rem_prompts={queue.qsize()} "
+                    f"samples_done={stats['n_done']} rem_tasks={queue.qsize()} "
                     f"cost=${stats['cost_usd']:.4f} tok_in={stats['prompt_tokens']} "
                     f"tok_out={stats['completion_tokens']} "
                     f"elapsed={elapsed:.1f}s"
@@ -399,6 +386,8 @@ async def main() -> None:
         "n_completed_this_run_samples": stats["n_done"],
         "n_total_prompts_in_file": stats["n_total_in_file"],
         "samples_per_prompt": args.samples_per_prompt,
+        "n_prompts_enqueued_this_run": stats["prompts_enqueued_this_run"],
+        "n_tasks_enqueued_this_run": stats["tasks_enqueued_this_run"],
     }
     with manifest_path.open("w", encoding="utf-8") as mf:
         json.dump(manifest, mf, indent=2)
