@@ -62,7 +62,7 @@ line-length = 100
 src = ["grpo_gsm8k"]
 
 [tool.ruff.lint]
-extend-select = ["E", "F", "I", "UP"]
+extend-select = ["E", "F", "I", "UP", "ARG"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["grpo_gsm8k"]
