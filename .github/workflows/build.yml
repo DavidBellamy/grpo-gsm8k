@@ -1,8 +1,7 @@
-name: Build & Push (GHCR)
+name: Build & Push (GHCR) multi-stage (no cache)
 
 on:
   push:
-    branches: [ main ]
     paths:
       - Dockerfile
       - .dockerignore
@@ -28,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       IMAGE_REPO: grpo-gsm8k
+      REGISTRY: ghcr.io
     steps:
       - uses: actions/checkout@v4
 
@@ -47,7 +47,45 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Docker metadata
+      - name: Derive deps tag from uv.lock
+        id: deps
+        shell: bash
+        run: |
+          if [ -f uv.lock ]; then
+            sha=$(sha256sum uv.lock | cut -c1-12)
+          else
+            sha="nolock"
+          fi
+          echo "DEPS_TAG=deps-${sha}" >> $GITHUB_ENV
+          echo "deps_tag=deps-${sha}" >> $GITHUB_OUTPUT
+
+      - name: Check if deps image exists
+        id: check-deps
+        shell: bash
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.OWNER_LC }}/${{ env.IMAGE_REPO }}:${{ env.DEPS_TAG }}"
+          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build & push deps image (only if missing)
+        if: steps.check-deps.outputs.exists != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          pull: true
+          target: deps
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.OWNER_LC }}/${{ env.IMAGE_REPO }}:${{ env.DEPS_TAG }}
+          no-cache: true
+          provenance: false
+          sbom: false
+
+      - name: Docker metadata (app image)
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -56,19 +94,20 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,prefix=sha-,format=short
 
-      - name: Build & push (NO CACHE)
+      - name: Build & push app image (no cache)
         uses: docker/build-push-action@v6
         with:
           context: .
           platforms: linux/amd64
           push: true
+          pull: true
+          target: app
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          no-cache: true          # <- do not use/import any cache
+          no-cache: true
           provenance: false
           sbom: false
 
-      # Ensure nothing lingers on disk after build
       - name: Prune buildx + docker
         if: always()
         run: |

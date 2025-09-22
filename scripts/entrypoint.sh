@@ -11,7 +11,7 @@ log() { printf '[entrypoint] %s\n' "$*"; }
 mkdir -p /workspace
 
 # Ensure DATA_DIR exists if set (for dataset snapshots, etc.)
-mkdir -p "$DATA_DIR"
+[ -n "${DATA_DIR:-}" ] && mkdir -p "$DATA_DIR"
 
 # --- Persistent caches & VS Code server/CLI on your Network Volume ---
 # These ENV are also set in the Dockerfile so all processes see them. We ensure dirs exist here.
