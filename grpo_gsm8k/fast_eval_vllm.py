@@ -18,7 +18,7 @@ def load_jsonl(p: str) -> list[dict]:
 
 def main(
     model_id: str = "Qwen/Qwen2.5-7B-Instruct",
-    eval_path: str = "artifacts/gsm8k/test_eval.jsonl",
+    eval_path: str = "artifacts/gsm8k/val.jsonl",
     limit: int | None = None,
     max_new_tokens: int = 1024,
     tp_size: int = 1,
@@ -54,7 +54,7 @@ def main(
     outputs = llm.generate(prompts, sp, use_tqdm=True)
     texts = [o.outputs[0].text for o in outputs]
 
-    rewards = [reward_from_text(o, d["answer"]) for o, d in zip(texts, data)]
+    rewards = [reward_from_text(o, d["answer"], "boxed") for o, d in zip(texts, data)]
     mean = sum(rewards) / len(rewards)
     print(f"vLLM pass@1: {mean:.3f} on n={len(rewards)}")
 
@@ -83,7 +83,7 @@ def main(
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
     p.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-7B-Instruct")
-    p.add_argument("--eval_path", type=str, default="artifacts/gsm8k/test_eval.jsonl")
+    p.add_argument("--eval_path", type=str, default="artifacts/gsm8k/val.jsonl")
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--max_new_tokens", type=int, default=384)
     p.add_argument("--gpu_mem_util", type=float, default=0.92)

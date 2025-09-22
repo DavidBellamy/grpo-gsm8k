@@ -17,7 +17,7 @@ Subcommands:
 
 Options:
     --model_id          Model identifier (default: "Qwen/Qwen2.5-7B-Instruct").
-    --eval_path         Path to evaluation data (default: "artifacts/gsm8k/test_eval.jsonl").
+    --eval_path         Path to evaluation data (default: "artifacts/gsm8k/test.jsonl").
     --limit             Limit number of evaluation samples.
     --batch_size        Batch size for evaluation (default: 8).
     --max_new_tokens    Maximum number of new tokens to generate (default: 384).
@@ -133,7 +133,7 @@ def main() -> None:
 
     e = sub.add_parser("eval", help="Run evaluation with unified logging & artifacts")
     e.add_argument("--model_id", default="Qwen/Qwen2.5-7B-Instruct")
-    e.add_argument("--eval_path", default="artifacts/gsm8k/test_eval.jsonl")
+    e.add_argument("--eval_path", default="artifacts/gsm8k/test.jsonl")
     e.add_argument("--limit", type=int, default=None)
     e.add_argument("--batch_size", type=int, default=8)
     e.add_argument("--max_new_tokens", type=int, default=384)

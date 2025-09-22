@@ -36,6 +36,26 @@ This will:
 
 ---
 
+## Generate DeepSeek R1 Reasoning Traces
+
+We generate DeepSeek R1 reasoning traces for problems in the GSM8k train set via DeepSeek's official API. You need to create an account and get your API key. This command can be run locally:
+
+```bash
+export DEEPSEEK_API_KEY=...
+
+uv run --no-project --with aiohttp \
+  python grpo_gsm8k/r1_traces.py \
+    --infile artifacts/gsm8k/train.jsonl \
+    --outfile artifacts/deepseek_r1_gsm8k_traces.jsonl \
+    --concurrency 4 \
+    --max-tokens 2048 \
+    --max-retries 5 \
+    --offpeak 0.25 \
+    --limit 5
+```
+
+---
+
 ## Run on RunPod (provider notes)
 
 The container is provider-agnostic. For RunPod specifically:
@@ -85,7 +105,7 @@ Then exec into the pod or use the tunnel and run the same command as in **Quicks
 ```bash
 python -m grpo_gsm8k.cli eval \
   --model_id "Qwen/Qwen2.5-7B-Instruct" \
-  --eval_path "artifacts/gsm8k/test_eval.jsonl" \
+  --eval_path "artifacts/gsm8k/val.jsonl" \
   --limit 800 \
   --max_new_tokens 384 \
   --gpu_mem_util 0.92 \
@@ -120,7 +140,7 @@ PY
 ```bash
 python -m grpo_gsm8k.fast_eval_vllm \
   --model_id Qwen/Qwen2.5-7B-Instruct \
-  --eval_path artifacts/gsm8k/test_eval.jsonl \
+  --eval_path artifacts/gsm8k/val.jsonl \
   --limit 200 \
   --max_new_tokens 384 \
   --gpu_mem_util 0.92
@@ -191,7 +211,7 @@ docker push ghcr.io/<GITHUB_USERNAME>/grpo-gsm8k:latest
   * `run_manifest.json` — environment + package versions
   * `locks/requirements.lock.txt` — exact deps used (`uv export --strict`)
   * `data.sha256` — checksums for `/data` (from `scripts/snapshot_dataset.sh`)
-* **Datasets:** `artifacts/gsm8k/{train,test_full,test_eval}.jsonl` and optional HF snapshot `artifacts/gsm8k_hf_snapshot/`
+* **Datasets:** `artifacts/gsm8k/{train,test,val}.jsonl` and optional HF snapshot `artifacts/gsm8k_hf_snapshot/`
 * **Baselines:** `artifacts/baselines/*.jsonl` — inputs, model outputs, reward, gold
 
 **Determinism toggles**
@@ -214,7 +234,7 @@ grpo-gsm8k/
 │   ├── repro.py              # seeds, manifests, sampling params, env capture
 │   └── reward_fn.py          # parse \boxed{...}; exact-match vs GSM8K gold
 ├── scripts/                  # sysinfo, env, locks, dataset snapshot, remote sync (rclone/B2)
-├── tests/                    # slow GPU/HF smoke test for Qwen (2+2 → \boxed{4})
+├── tests/
 ├── Dockerfile                # CUDA 12.8, uv, snapshot-locked apt
 ├── pyproject.toml            # deps, linters, pytest config, uv cu128 index
 └── artifacts/                # outputs (created at runtime)
@@ -228,12 +248,23 @@ grpo-gsm8k/
 uv sync --dev
 pre-commit install
 pre-commit run --all-files
-pytest                 # run all
-pytest -m slow         # only slow tests (LLM completions)
-pytest -m "not slow"    # only fast tests
 ```
 
-> `tests/test_qwen_math.py` loads `Qwen/Qwen2.5-7B-Instruct` and checks the final `\boxed{4}` for “2+2?”. Marked `@pytest.mark.slow`.
+Run (non-slow) tests locally with:
+```bash
+PYTHONPATH=. uv run --no-project \
+  --with pytest --with pytest-asyncio \
+  --with aiohttp --with datasets \
+  python -m pytest -q
+```
+
+Run containerized tests with:
+```bash
+IMG=ghcr.io/davidbellamy/grpo-gsm8k:latest
+docker run --rm -it -v "$PWD":/work -w /work \
+  -v "$PWD/.uv_cache":/root/.cache/uv -v "$HOME/.cache/huggingface":/root/.cache/huggingface \
+  "$IMG" bash -lc 'uv sync --frozen && uv run pytest -q --runslow'
+```
 
 ---
 
@@ -252,7 +283,3 @@ pytest -m "not slow"    # only fast tests
 MIT — see [`LICENSE`](LICENSE).
 
 ---
-
-### Notes
-
-* Current focus is **data prep** + **baseline evaluation** via vLLM; RL training hooks are coming.
