@@ -234,7 +234,7 @@ grpo-gsm8k/
 │   ├── repro.py              # seeds, manifests, sampling params, env capture
 │   └── reward_fn.py          # parse \boxed{...}; exact-match vs GSM8K gold
 ├── scripts/                  # sysinfo, env, locks, dataset snapshot, remote sync (rclone/B2)
-├── tests/                    # slow GPU/HF smoke test for Qwen (2+2 → \boxed{4})
+├── tests/
 ├── Dockerfile                # CUDA 12.8, uv, snapshot-locked apt
 ├── pyproject.toml            # deps, linters, pytest config, uv cu128 index
 └── artifacts/                # outputs (created at runtime)
@@ -248,12 +248,23 @@ grpo-gsm8k/
 uv sync --dev
 pre-commit install
 pre-commit run --all-files
-pytest                 # run all
-pytest -m slow         # only slow tests (LLM completions)
-pytest -m "not slow"    # only fast tests
 ```
 
-> `tests/test_qwen_math.py` loads `Qwen/Qwen2.5-7B-Instruct` and checks the final `\boxed{4}` for “2+2?”. Marked `@pytest.mark.slow`.
+Run (non-slow) tests locally with:
+```bash
+PYTHONPATH=. uv run --no-project \
+  --with pytest --with pytest-asyncio \
+  --with aiohttp --with datasets \
+  python -m pytest -q
+```
+
+Run containerized tests with:
+```bash
+IMG=ghcr.io/davidbellamy/grpo-gsm8k:latest
+docker run --rm -it -v "$PWD":/work -w /work \
+  -v "$PWD/.uv_cache":/root/.cache/uv -v "$HOME/.cache/huggingface":/root/.cache/huggingface \
+  "$IMG" bash -lc 'uv sync --frozen && uv run pytest -q --runslow'
+```
 
 ---
 
@@ -272,7 +283,3 @@ pytest -m "not slow"    # only fast tests
 MIT — see [`LICENSE`](LICENSE).
 
 ---
-
-### Notes
-
-* Current focus is **data prep** + **baseline evaluation** via vLLM; RL training hooks are coming.

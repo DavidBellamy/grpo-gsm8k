@@ -1,8 +1,15 @@
+from __future__ import annotations
+
 import math
 import re
+from typing import TYPE_CHECKING
 
 import pytest
-from transformers import AutoModelForCausalLM, AutoTokenizer
+
+# Optional typing-only imports so Ruff/isort stay happy without importing heavy deps at runtime
+if TYPE_CHECKING:  # pragma: no cover
+    # Only for type hints; does not import at runtime
+    pass
 
 MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
 
@@ -33,11 +40,32 @@ def _extract_boxed_number(text: str) -> float:
 
 @pytest.mark.slow
 def test_qwen_basic_math_answer_is_4() -> None:
+    # Skip cleanly if heavy deps aren't installed
+    tfm = pytest.importorskip(
+        "transformers",
+        reason="requires transformers (and likely torch) to run this slow test",
+    )
+    pytest.importorskip("torch", reason="requires torch for model execution")
+
+    AutoTokenizer = tfm.AutoTokenizer
+    AutoModelForCausalLM = tfm.AutoModelForCausalLM
+
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+    model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, device_map="auto", torch_dtype="auto")
+
+    prompt = "system\n" "You are a helpful assistant. Please show your reasoning. "
+
+    pytest.importorskip("torch", reason="requires torch for model execution")
+
+    AutoTokenizer = tfm.AutoTokenizer
+    AutoModelForCausalLM = tfm.AutoModelForCausalLM
+
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
     model = AutoModelForCausalLM.from_pretrained(MODEL_NAME, device_map="auto", torch_dtype="auto")
 
     prompt = (
         "system\n"
+        "You are a helpful assistant. Please show your reasoning. "
         "You are a helpful assistant. Please show your reasoning. "
         "Return the final numeric answer as \\boxed{...}\n"
         "user\n"

@@ -70,7 +70,7 @@ def main(
         ).save_to_disk(snapshot_dir)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Prepare GSM8K train/val/test splits.")
     parser.add_argument(
         "--out-dir",
@@ -117,7 +117,7 @@ def parse_args() -> argparse.Namespace:
         help="Do not save a HF snapshot to disk.",
     )
     parser.set_defaults(snapshot=True)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 if __name__ == "__main__":
