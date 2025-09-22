@@ -258,12 +258,16 @@ PYTHONPATH=. uv run --no-project \
   python -m pytest -q
 ```
 
-Run containerized tests with:
+Run parity tests in the same environment as RunPod (container, no GPU) with:
 ```bash
-IMG=ghcr.io/davidbellamy/grpo-gsm8k:latest
-docker run --rm -it -v "$PWD":/work -w /work \
-  -v "$PWD/.uv_cache":/root/.cache/uv -v "$HOME/.cache/huggingface":/root/.cache/huggingface \
-  "$IMG" bash -lc 'uv sync --frozen && uv run pytest -q --runslow'
+docker run --rm -it -v "$PWD":/workspace ghcr.io/davidbellamy/grpo-gsm8k:latest \
+  bash -lc 'pytest -q -m "not slow"'
+```
+
+Run all tests (incl. ones needing GPU) with:
+```bash
+docker run --rm -it --gpus all -v "$PWD":/workspace ghcr.io/davidbellamy/grpo-gsm8k:latest \
+  bash -lc 'pytest -q'
 ```
 
 ---
