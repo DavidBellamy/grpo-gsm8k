@@ -6,10 +6,9 @@ Generate and save DeepSeek-R1 reasoning traces for GSM8K (train set).
 - Also writes: out/manifest_<timestamp>.json (run metadata + aggregate token/cost stats)
 - Resumable: skips ids already present in the output file
 - Concurrency: configurable; polite rate limiting & retries
-- Provider: uses official DeepSeek API only (cheapest, with off-peak discounts)
+- Provider: uses official DeepSeek API only
 - Reasoning content: saved from `message.reasoning_content` (DeepSeek official)
 - Final answer: saved from `message.content`
-- Cost estimator: uses live token usage returned by API + current price table
 
 Usage:
     DEEPSEEK_API_KEY=... python generate_r1_gsm8k.py \
@@ -18,7 +17,6 @@ Usage:
         --concurrency 52 \
         --max-tokens 2048 \
         --max-retries 5 \
-        --offpeak 0.25 \
         --limit 100
 
 Args:
@@ -27,7 +25,6 @@ Args:
     --concurrency    Number of concurrent API requests (default: 52)
     --max-tokens     Max tokens per DeepSeek completion (default: 2048)
     --max-retries    Max retries per sample (default: 5)
-    --offpeak        Optional discount multiplier for DeepSeek off-peak (e.g., 0.25 for 75% off)
     --limit          Max number of *unique* prompts to send to DeepSeek API (default: None)
     --samples-per-prompt  Number of R1 responses to collect per prompt (default: 1)
 
@@ -57,18 +54,6 @@ from grpo_gsm8k.reward_fn import (
     normalize_number,
     reward_from_text,
 )
-
-# --------------------------- Pricing (USD per 1M tokens) ---------------------------
-PRICES = {
-    "deepseek": {
-        # Official docs (2025-01-20 release; still current as of 2025-09-19):
-        # Input: $0.55/M (cache miss), $0.14/M (cache hit); Output: $2.19/M
-        # We conservatively assume cache miss for inputs.
-        "input_per_m": 0.55,
-        "output_per_m": 2.19,
-        # Optional off-peak discount multiplier (0.25 means 75% off). Set via --offpeak 0.25
-    },
-}
 
 
 def now_iso() -> str:
@@ -124,24 +109,13 @@ async def call_deepseek(
         return data
 
 
-def summarize_usage(usage: dict[str, Any] | None, offpeak: float | None) -> dict[str, Any]:
+def summarize_usage(usage: dict[str, Any] | None) -> dict[str, int]:
     in_tok = usage.get("prompt_tokens", 0) if usage else 0
     out_tok = usage.get("completion_tokens", 0) if usage else 0
-
-    price_in = PRICES["deepseek"]["input_per_m"]
-    price_out = PRICES["deepseek"]["output_per_m"]
-
-    if offpeak is not None:
-        price_in *= offpeak
-        price_out *= offpeak
-
-    cost = (in_tok / 1_000_000.0) * price_in + (out_tok / 1_000_000.0) * price_out
     return {
-        "prompt_tokens": in_tok,
-        "completion_tokens": out_tok,
-        "total_tokens": in_tok + out_tok,
-        "estimated_cost_usd": round(cost, 6),
-        "unit_prices_per_1M": {"input": price_in, "output": price_out},
+        "prompt_tokens": int(in_tok),
+        "completion_tokens": int(out_tok),
+        "total_tokens": int(in_tok + out_tok),
     }
 
 
@@ -185,7 +159,7 @@ async def worker(
                 final = choice.get("content", "")
                 usage = data.get("usage", {})
 
-                usage_summary = summarize_usage(usage, args.offpeak)
+                usage_summary = summarize_usage(usage)
                 pred_src = extract_answer_colon(final)
                 final_number = normalize_number(pred_src)
                 correct = int(reward_from_text(final, gold, parser="answer"))
@@ -217,7 +191,6 @@ async def worker(
                 stats["n_done"] += 1
                 stats["prompt_tokens"] += usage_summary["prompt_tokens"]
                 stats["completion_tokens"] += usage_summary["completion_tokens"]
-                stats["cost_usd"] += usage_summary["estimated_cost_usd"]
                 break
             except Exception as e:
                 if tries <= args.max_retries:
@@ -252,12 +225,6 @@ async def main() -> None:
         help="Number of R1 responses to collect per prompt (default: 1)",
     )
     parser.add_argument(
-        "--offpeak",
-        type=float,
-        default=None,
-        help="Optional discount multiplier for DeepSeek off-peak (e.g., 0.25 for 75% off)",
-    )
-    parser.add_argument(
         "--limit", type=int, default=None, help="Max number of prompts to send to DeepSeek API"
     )
     args = parser.parse_args()
@@ -283,9 +250,7 @@ async def main() -> None:
         "model": "deepseek-reasoner",
         "max_tokens": args.max_tokens,
         "concurrency": args.concurrency,
-        "offpeak_multiplier": args.offpeak,
         "notes": "GSM8K train reasoning traces with DeepSeek-R1",
-        "pricing": PRICES["deepseek"],
     }
 
     # Load existing to resume (count samples per prompt)
@@ -328,7 +293,6 @@ async def main() -> None:
         "n_done": 0,  # samples completed this run
         "prompt_tokens": 0,
         "completion_tokens": 0,
-        "cost_usd": 0.0,
         "limit": args.limit,
         "samples_per_prompt": args.samples_per_prompt,
         "prompts_enqueued_this_run": added,
@@ -363,7 +327,7 @@ async def main() -> None:
                 print(
                     f"[{datetime.now().strftime('%H:%M:%S')}] "
                     f"samples_done={stats['n_done']} rem_tasks={queue.qsize()} "
-                    f"cost=${stats['cost_usd']:.4f} tok_in={stats['prompt_tokens']} "
+                    f"tok_in={stats['prompt_tokens']} "
                     f"tok_out={stats['completion_tokens']} "
                     f"elapsed={elapsed:.1f}s"
                 )
@@ -380,7 +344,6 @@ async def main() -> None:
     # Finalize manifest with stats
     manifest["finished_utc"] = datetime.now(timezone.utc).isoformat()
     manifest["aggregate"] = {
-        "estimated_cost_usd": round(stats["cost_usd"], 6),
         "prompt_tokens": stats["prompt_tokens"],
         "completion_tokens": stats["completion_tokens"],
         "n_completed_this_run_samples": stats["n_done"],
