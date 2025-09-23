@@ -29,7 +29,11 @@ def main(
     seed_everything(SEED, deterministic=False)
     run = wandb_run_init(wandb_project, run_name, dict(model_id=model_id, tp_size=tp_size))
 
-    tok = AutoTokenizer.from_pretrained(model_id)
+    tok = AutoTokenizer.from_pretrained(model_id, use_fast=True)
+    # Ensure a pad token and left padding even if not strictly needed by vLLM
+    if tok.pad_token is None:
+        tok.pad_token = tok.eos_token
+    tok.padding_side = "left"
 
     # Load eval set (optionally limit), then extract questions
     data = load_jsonl(eval_path)

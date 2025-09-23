@@ -315,6 +315,8 @@ def train_sft_on_r1_pairs(
     logger.info("Loading model from %s", load_path)
     tok = AutoTokenizer.from_pretrained(load_path, use_fast=True)
     _ensure_pad_token(tok)
+    # Ensure decoder-only models use left padding for correct generation
+    tok.padding_side = "left"
 
     if dtype is None:
         dtype = (
@@ -323,6 +325,12 @@ def train_sft_on_r1_pairs(
             else torch.float32
         )
     model = AutoModelForCausalLM.from_pretrained(load_path, torch_dtype=dtype)
+    # Keep model configs in sync with tokenizer pad token
+    if tok.pad_token_id is not None:
+        model.config.pad_token_id = tok.pad_token_id
+        gen_cfg = getattr(model, "generation_config", None)
+        if gen_cfg is not None:
+            gen_cfg.pad_token_id = tok.pad_token_id
     model.to(device_t)
     model.train()
 

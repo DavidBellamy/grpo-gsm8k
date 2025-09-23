@@ -1,8 +1,9 @@
 # Simple RL for Math Reasoning
 
-⚠️ This ReadMe is under construction so it might contain some mistakes. More soon!
+⚠️ Under construction. More soon!
 
-This repo contains RL-style fine-tuning & evaluation scaffolding for math reasoning, e.g. GSM8K. It is LoRA-friendly but will also have full fine-tuning code as well. It is meant for models that fit on a single node (i.e. 8 GPUs).
+This project is for SFT, expert iteration, and RL post-training of Qwen models on GSM8k problems. It is designed for single-node jobs.
+
 Includes: **reproducible containers**, **determinism toggles**, **dataset pinning/snapshots**, and a **vLLM baseline eval**.
 
 ---
@@ -35,6 +36,20 @@ This will:
 > **GPU required** for evaluation.
 
 ---
+
+## Generate GSM8k Splits
+
+We reserve 512 problems from the original training set for the validation split. 
+
+```python
+python -m grpo_gsm8k.data_prep \
+  --out-dir artifacts/gsm8k \
+  --eval-n 512 \
+  --seed 31415 \
+  --revision main \
+  --cache-dir /workspace/.cache/huggingface \
+  --snapshot-dir artifacts/gsm8k_hf_snapshot
+```
 
 ## Generate DeepSeek R1 Reasoning Traces
 
