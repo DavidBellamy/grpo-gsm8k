@@ -47,6 +47,7 @@ from typing import Any
 from grpo_gsm8k import data_prep
 from grpo_gsm8k.fast_eval_vllm import main as vllm_eval_main
 from grpo_gsm8k.repro import write_run_manifest
+from grpo_gsm8k.sft import train_sft_on_r1_pairs
 
 
 def _sh(cmd: list[str], **kw: Any) -> None:
@@ -127,6 +128,145 @@ def cmd_eval(args: argparse.Namespace) -> None:
         print("DATA_DIR not set or does not exist; skipping dataset snapshot")
 
 
+def cmd_sft(args: argparse.Namespace) -> None:
+    run_dir = _run_dir()
+    print(f"Run dir: {run_dir}")
+
+    # 1) System info
+    _sh(["bash", "scripts/collect_system_info.sh", str(run_dir)])
+
+    # 2) Manifest
+    write_run_manifest(
+        str(run_dir / "run_manifest.json"),
+        extras={
+            "model_id": args.model_id,
+            "data_path": args.data_path,
+            "note": "SFT run",
+        },
+    )
+
+    # 3) W&B init (optional)
+    wandb_run = None
+    try:
+        import wandb  # noqa: WPS433
+
+        wandb_kwargs = {
+            "project": args.wandb_project,
+            "name": args.run_name,
+            "config": {
+                k: getattr(args, k)
+                for k in [
+                    "model_id",
+                    "data_path",
+                    "microbatch_size",
+                    "gradient_accumulation_steps",
+                    "num_epochs",
+                    "max_steps",
+                    "learning_rate",
+                    "weight_decay",
+                    "max_total_tokens",
+                    "log_every",
+                    "eval_every",
+                    "eval_examples",
+                    "do_vllm_eval",
+                    "vllm_device",
+                    "vllm_gpu_memory_util",
+                ]
+                if hasattr(args, k)
+            },
+        }
+        if args.wandb_entity:
+            wandb_kwargs["entity"] = args.wandb_entity
+        if args.wandb_mode:
+            os.environ["WANDB_MODE"] = args.wandb_mode
+        wandb_run = wandb.init(**wandb_kwargs)
+    except Exception as e:  # noqa: BLE001
+        print(f"W&B not initialized: {e}")
+
+    # 4) Run SFT
+    # Build W&B logger if available
+    def _wb_log(step: int, metrics: dict[str, float]) -> None:
+        if wandb_run is None:
+            return
+        try:
+            import wandb
+
+            wandb.log(metrics, step=step)
+        except Exception as e:  # noqa: BLE001
+            print(f"W&B step logging failed: {e}")
+
+    # Optional on_eval callback to push example generations to W&B
+    def _on_eval(step: int, gen_log: dict[str, Any]) -> None:
+        if wandb_run is None:
+            return
+        try:
+            import wandb
+
+            per = gen_log.get("per_example", [])
+            if per:
+                table = wandb.Table(columns=["step", "prompt", "response", "length", "entropy"])
+                limit = min(len(per), getattr(args, "log_examples", 4))
+                for row in per[:limit]:
+                    table.add_data(
+                        step,
+                        row.get("prompt", ""),
+                        row.get("response", ""),
+                        row.get("length", 0),
+                        row.get("mean_token_entropy", 0.0),
+                    )
+                wandb.log({"eval/examples": table}, step=step)
+        except Exception as e:  # noqa: BLE001
+            print(f"W&B example logging failed: {e}")
+
+    result = train_sft_on_r1_pairs(
+        data_path=args.data_path,
+        model_id=args.model_id,
+        device=args.device,
+        microbatch_size=args.microbatch_size,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        num_epochs=args.num_epochs,
+        max_steps=args.max_steps,
+        learning_rate=args.learning_rate,
+        weight_decay=args.weight_decay,
+        max_total_tokens=args.max_total_tokens,
+        log_every=args.log_every,
+        eval_every=args.eval_every,
+        eval_examples=args.eval_examples,
+        do_vllm_eval=args.do_vllm_eval,
+        vllm_device=args.vllm_device,
+        vllm_gpu_memory_utilization=args.vllm_gpu_memory_util,
+        wb_log=_wb_log if wandb_run is not None else None,
+        checkpoint_dir=args.checkpoint_dir,
+        checkpoint_every=args.checkpoint_every,
+        on_eval=_on_eval if wandb_run is not None else None,
+        resume_from=args.resume_from,
+    )
+
+    # 5) Log final metrics to W&B and close
+    if wandb_run is not None:
+        try:
+            import wandb  # noqa: WPS433
+
+            wandb.log(result)
+            wandb.finish()
+        except Exception as e:  # noqa: BLE001
+            print(f"W&B logging failed: {e}")
+
+    # 6) Lock/export the exact env used in this run
+    (run_dir / "locks").mkdir(exist_ok=True, parents=True)
+    _sh(
+        [
+            "uv",
+            "export",
+            "--format",
+            "requirements-txt",
+            "--frozen",
+            "--output-file",
+            str(run_dir / "locks" / "requirements.lock.txt"),
+        ]
+    )
+
+
 def main() -> None:
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -148,6 +288,58 @@ def main() -> None:
     e.add_argument("--revision", default="main")  # or a commit SHA
     e.add_argument("--cache_dir", default="/workspace/.cache/huggingface")
     e.set_defaults(func=cmd_eval)
+
+    s = sub.add_parser("sft", help="Run SFT on R1 traces with W&B logging")
+    s.add_argument("--data_path", default="artifacts/r1_sft_pairs.jsonl")
+    s.add_argument("--model_id", default="Qwen/Qwen2.5-Math-1.5B-Instruct")
+    s.add_argument("--device", default=None)
+    s.add_argument("--microbatch_size", type=int, default=2)
+    s.add_argument("--gradient_accumulation_steps", type=int, default=8)
+    s.add_argument("--num_epochs", type=int, default=1)
+    s.add_argument("--max_steps", type=int, default=None)
+    s.add_argument("--learning_rate", type=float, default=1e-5)
+    s.add_argument("--weight_decay", type=float, default=0.0)
+    s.add_argument("--max_total_tokens", type=int, default=2048)
+    s.add_argument("--log_every", type=int, default=10)
+    s.add_argument("--eval_every", type=int, default=200)
+    s.add_argument("--eval_examples", type=int, default=4)
+    # vLLM eval settings (2nd GPU)
+    s.add_argument("--do_vllm_eval", action="store_true")
+    s.add_argument("--vllm_device", default="cuda:1")
+    s.add_argument("--vllm_gpu_memory_util", type=float, default=0.85)
+    # W&B
+    s.add_argument("--wandb_project", default="grpo-gsm8k")
+    s.add_argument("--wandb_entity", default=None)
+    s.add_argument("--run_name", default=None)
+    s.add_argument(
+        "--wandb_mode",
+        default=None,
+        help="online|offline|disabled (sets WANDB_MODE)",
+    )
+    # Checkpoints and example logging
+    s.add_argument(
+        "--checkpoint_dir",
+        default=None,
+        help="Directory to save model/tokenizer checkpoints",
+    )
+    s.add_argument(
+        "--checkpoint_every",
+        type=int,
+        default=None,
+        help="Save a checkpoint every N steps",
+    )
+    s.add_argument(
+        "--log_examples",
+        type=int,
+        default=4,
+        help="Max number of eval examples to log to W&B per eval",
+    )
+    s.add_argument(
+        "--resume_from",
+        default=None,
+        help="Checkpoint directory or a root containing step_* subdirs to resume from",
+    )
+    s.set_defaults(func=cmd_sft)
 
     args = p.parse_args()
     args.func(args)
