@@ -253,7 +253,7 @@ pre-commit run --all-files
 Run (non-slow) tests locally with:
 ```bash
 PYTHONPATH=. uv run --no-project \
-  --with pytest,pytest-asyncio,aiohttp,datasets,torch,transformers \
+  --with pytest,pytest-asyncio,aiohttp,datasets,torch,transformers,vllm \
   python -m pytest -q
 ```
 
