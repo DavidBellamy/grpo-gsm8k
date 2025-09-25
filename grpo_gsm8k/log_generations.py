@@ -97,7 +97,7 @@ def log_generations(
     # out.scores is a list of length T_gen with tensors of shape (B, V).
     if len(out.scores) > 0:
         logits_bt = torch.stack(out.scores, dim=1)  # (B, T_gen, V)
-        ent_bt = compute_entropy(logits_bt)  # (B, T_gen)
+        ent_bt = compute_entropy(logits_bt).to(torch.float32)  # (B, T_gen)
     else:
         ent_bt = torch.zeros((batch_size, 0), dtype=torch.float32, device=device)
 

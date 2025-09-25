@@ -17,7 +17,7 @@ Subcommands:
 
 Options:
     --model_id          Model identifier (default: "Qwen/Qwen2.5-7B-Instruct").
-    --eval_path         Path to evaluation data (default: "artifacts/gsm8k/test.jsonl").
+    --eval_path         Path to evaluation data (default: "artifacts/gsm8k/val.jsonl").
     --limit             Limit number of evaluation samples.
     --batch_size        Batch size for evaluation (default: 8).
     --max_new_tokens    Maximum number of new tokens to generate (default: 384).
@@ -43,6 +43,8 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+import wandb
 
 from grpo_gsm8k import data_prep
 from grpo_gsm8k.fast_eval_vllm import main as vllm_eval_main
@@ -117,7 +119,9 @@ def cmd_eval(args: argparse.Namespace) -> None:
             "--frozen",
             "--output-file",
             str(run_dir / "locks" / "requirements.lock.txt"),
-        ]
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
     )
 
     # 6) Snapshot any external data directory for provenance
@@ -145,78 +149,59 @@ def cmd_sft(args: argparse.Namespace) -> None:
         },
     )
 
-    # 3) W&B init (optional)
-    wandb_run = None
-    try:
-        import wandb  # noqa: WPS433
-
-        wandb_kwargs = {
-            "project": args.wandb_project,
-            "name": args.run_name,
-            "config": {
-                k: getattr(args, k)
-                for k in [
-                    "model_id",
-                    "data_path",
-                    "microbatch_size",
-                    "gradient_accumulation_steps",
-                    "num_epochs",
-                    "max_steps",
-                    "learning_rate",
-                    "weight_decay",
-                    "max_total_tokens",
-                    "log_every",
-                    "eval_every",
-                    "eval_examples",
-                    "do_vllm_eval",
-                    "vllm_device",
-                    "vllm_gpu_memory_util",
-                ]
-                if hasattr(args, k)
-            },
-        }
-        if args.wandb_entity:
-            wandb_kwargs["entity"] = args.wandb_entity
-        if args.wandb_mode:
-            os.environ["WANDB_MODE"] = args.wandb_mode
-        wandb_run = wandb.init(**wandb_kwargs)
-    except Exception as e:  # noqa: BLE001
-        print(f"W&B not initialized: {e}")
+    # 3) W&B init
+    wandb_kwargs: dict[str, Any] = {
+        "project": args.wandb_project,
+        "name": args.run_name,
+        "config": {
+            k: getattr(args, k)
+            for k in [
+                "model_id",
+                "data_path",
+                "microbatch_size",
+                "gradient_accumulation_steps",
+                "num_epochs",
+                "max_steps",
+                "learning_rate",
+                "adamw_beta1",
+                "adamw_beta2",
+                "adamw_eps",
+                "weight_decay",
+                "max_total_tokens",
+                "log_every",
+                "eval_every",
+                "eval_examples",
+                "vllm_device",
+                "vllm_gpu_memory_util",
+            ]
+            if hasattr(args, k)
+        },
+    }
+    if args.wandb_entity:
+        wandb_kwargs["entity"] = args.wandb_entity
+    if args.wandb_mode:
+        os.environ["WANDB_MODE"] = args.wandb_mode
+    wandb.init(**wandb_kwargs)
 
     # 4) Run SFT
-    # Build W&B logger if available
     def _wb_log(step: int, metrics: dict[str, float]) -> None:
-        if wandb_run is None:
-            return
-        try:
-            import wandb
+        wandb.log(metrics, step=step)
 
-            wandb.log(metrics, step=step)
-        except Exception as e:  # noqa: BLE001
-            print(f"W&B step logging failed: {e}")
-
-    # Optional on_eval callback to push example generations to W&B
     def _on_eval(step: int, gen_log: dict[str, Any]) -> None:
-        if wandb_run is None:
+        per = gen_log.get("per_example", [])
+        if not per:
             return
-        try:
-            import wandb
-
-            per = gen_log.get("per_example", [])
-            if per:
-                table = wandb.Table(columns=["step", "prompt", "response", "length", "entropy"])
-                limit = min(len(per), getattr(args, "log_examples", 4))
-                for row in per[:limit]:
-                    table.add_data(
-                        step,
-                        row.get("prompt", ""),
-                        row.get("response", ""),
-                        row.get("length", 0),
-                        row.get("mean_token_entropy", 0.0),
-                    )
-                wandb.log({"eval/examples": table}, step=step)
-        except Exception as e:  # noqa: BLE001
-            print(f"W&B example logging failed: {e}")
+        table = wandb.Table(columns=["step", "prompt", "response", "length", "entropy"])
+        limit = min(len(per), getattr(args, "log_examples", 4))
+        for row in per[:limit]:
+            table.add_data(
+                step,
+                row.get("prompt", ""),
+                row.get("response", ""),
+                row.get("length", 0),
+                row.get("mean_token_entropy", 0.0),
+            )
+        wandb.log({"eval/examples": table}, step=step)
 
     result = train_sft_on_r1_pairs(
         data_path=args.data_path,
@@ -227,32 +212,28 @@ def cmd_sft(args: argparse.Namespace) -> None:
         num_epochs=args.num_epochs,
         max_steps=args.max_steps,
         learning_rate=args.learning_rate,
+        adamw_beta1=args.adamw_beta1,
+        adamw_beta2=args.adamw_beta2,
+        adamw_eps=args.adamw_eps,
         weight_decay=args.weight_decay,
         max_total_tokens=args.max_total_tokens,
         log_every=args.log_every,
         eval_every=args.eval_every,
         eval_examples=args.eval_examples,
-        do_vllm_eval=args.do_vllm_eval,
         vllm_device=args.vllm_device,
         vllm_gpu_memory_utilization=args.vllm_gpu_memory_util,
-        wb_log=_wb_log if wandb_run is not None else None,
+        wb_log=_wb_log,
         checkpoint_dir=args.checkpoint_dir,
         checkpoint_every=args.checkpoint_every,
-        on_eval=_on_eval if wandb_run is not None else None,
+        on_eval=_on_eval,
         resume_from=args.resume_from,
     )
 
-    # 5) Log final metrics to W&B and close
-    if wandb_run is not None:
-        try:
-            import wandb  # noqa: WPS433
+    # 5) Final metrics
+    wandb.log(result)
+    wandb.finish()
 
-            wandb.log(result)
-            wandb.finish()
-        except Exception as e:  # noqa: BLE001
-            print(f"W&B logging failed: {e}")
-
-    # 6) Lock/export the exact env used in this run
+    # 6) Lock/export environment
     (run_dir / "locks").mkdir(exist_ok=True, parents=True)
     _sh(
         [
@@ -263,7 +244,9 @@ def cmd_sft(args: argparse.Namespace) -> None:
             "--frozen",
             "--output-file",
             str(run_dir / "locks" / "requirements.lock.txt"),
-        ]
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
     )
 
 
@@ -273,7 +256,7 @@ def main() -> None:
 
     e = sub.add_parser("eval", help="Run evaluation with unified logging & artifacts")
     e.add_argument("--model_id", default="Qwen/Qwen2.5-7B-Instruct")
-    e.add_argument("--eval_path", default="artifacts/gsm8k/test.jsonl")
+    e.add_argument("--eval_path", default="artifacts/gsm8k/val.jsonl")
     e.add_argument("--limit", type=int, default=None)
     e.add_argument("--batch_size", type=int, default=8)
     e.add_argument("--max_new_tokens", type=int, default=384)
@@ -298,13 +281,15 @@ def main() -> None:
     s.add_argument("--num_epochs", type=int, default=1)
     s.add_argument("--max_steps", type=int, default=None)
     s.add_argument("--learning_rate", type=float, default=1e-5)
+    s.add_argument("--adamw_beta1", type=float, default=0.9)
+    s.add_argument("--adamw_beta2", type=float, default=0.95)
+    s.add_argument("--adamw_eps", type=float, default=1e-8)
     s.add_argument("--weight_decay", type=float, default=0.0)
     s.add_argument("--max_total_tokens", type=int, default=2048)
     s.add_argument("--log_every", type=int, default=10)
     s.add_argument("--eval_every", type=int, default=200)
     s.add_argument("--eval_examples", type=int, default=4)
     # vLLM eval settings (2nd GPU)
-    s.add_argument("--do_vllm_eval", action="store_true")
     s.add_argument("--vllm_device", default="cuda:1")
     s.add_argument("--vllm_gpu_memory_util", type=float, default=0.85)
     # W&B

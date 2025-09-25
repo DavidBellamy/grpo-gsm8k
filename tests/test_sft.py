@@ -4,8 +4,17 @@ from typing import Any, cast
 
 import pytest
 import torch
+from safetensors.torch import load_file
 
 import grpo_gsm8k.sft as sft
+
+
+class FakeConfig:
+    pad_token_id = 0
+    eos_token_id = 0
+
+    def to_json_string(self) -> str:
+        return json.dumps({"architectures": ["Fake"]})
 
 
 def test_sft_microbatch_train_step_basic() -> None:
@@ -185,6 +194,7 @@ def test_train_sft_on_r1_pairs_runs_cpu_minimal(
             super().__init__()
             self.emb = torch.nn.Embedding(100, hidden)
             self.lin = torch.nn.Linear(hidden, vocab)
+            self.config = FakeConfig()
 
         def forward(
             self, input_ids: torch.Tensor, _attention_mask: torch.Tensor | None = None
@@ -271,9 +281,7 @@ def test_train_sft_on_r1_pairs_runs_cpu_minimal(
         log_every=1,
         eval_every=1,
         eval_examples=1,
-        do_vllm_eval=False,
         wb_log=wb_log,
-        dtype=torch.float32,
     )
 
     assert "steps" in out and out["steps"] >= 1
@@ -312,6 +320,7 @@ def test_train_sft_with_vllm_eval(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
             super().__init__()
             self.emb = torch.nn.Embedding(10, 4)
             self.lin = torch.nn.Linear(4, 5)
+            self.config = FakeConfig()
 
         def forward(
             self, input_ids: torch.Tensor, _attention_mask: torch.Tensor | None = None
@@ -362,9 +371,6 @@ def test_train_sft_with_vllm_eval(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     )
 
     class FakeLLM:
-        def __init__(self) -> None:
-            self.synced = False
-
         def generate(self, prompts: list[str], _samp: Any) -> list[Any]:
             return [
                 type("Out", (), {"outputs": [type("C", (), {"text": "ok", "token_ids": [1, 2]})]})
@@ -376,11 +382,7 @@ def test_train_sft_with_vllm_eval(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
     ) -> FakeLLM:
         return FakeLLM()
 
-    def fake_load_policy(_policy: Any, llm: FakeLLM) -> None:
-        llm.synced = True
-
     monkeypatch.setattr(sft, "init_vllm", fake_init_vllm)
-    monkeypatch.setattr(sft, "load_policy_into_vllm_instance", fake_load_policy)
 
     metrics: list[tuple[int, dict[str, float]]] = []
 
@@ -396,13 +398,11 @@ def test_train_sft_with_vllm_eval(monkeypatch: pytest.MonkeyPatch, tmp_path: Pat
         max_steps=1,
         log_every=1,
         eval_every=1,
-        do_vllm_eval=True,
         vllm_device="cuda:1",
         wb_log=wb_log,
-        dtype=torch.float32,
     )
     assert out["steps"] >= 1
-    assert any("eval_vllm/avg_response_length" in m for _, m in metrics)
+    assert any("eval/avg_response_length" in m for _, m in metrics)
 
 
 def test_resolve_resume_path_picks_latest_step(tmp_path: Path) -> None:
@@ -454,6 +454,7 @@ def test_train_sft_resume_from_latest(monkeypatch: pytest.MonkeyPatch, tmp_path:
             super().__init__()
             self.emb = torch.nn.Embedding(10, 4)
             self.lin = torch.nn.Linear(4, 5)
+            self.config = FakeConfig()
 
         def forward(
             self, input_ids: torch.Tensor, _attention_mask: torch.Tensor | None = None
@@ -528,8 +529,6 @@ def test_train_sft_resume_from_latest(monkeypatch: pytest.MonkeyPatch, tmp_path:
         max_steps=1,
         log_every=1,
         eval_every=1,
-        do_vllm_eval=False,
-        dtype=torch.float32,
         resume_from=ckpt_root,
     )
 
@@ -537,3 +536,57 @@ def test_train_sft_resume_from_latest(monkeypatch: pytest.MonkeyPatch, tmp_path:
     expected = sft._resolve_resume_path(ckpt_root)
     assert Path(seen["tok"]) == expected
     assert Path(seen["model"]) == expected
+
+
+def test_save_policy_checkpoint_for_vllm(tmp_path: Path) -> None:
+    class FakePolicy(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.lin = torch.nn.Linear(2, 2)
+            self.config = FakeConfig()
+
+    policy = FakePolicy()
+    ckpt_dir = sft.save_policy_checkpoint_for_vllm(
+        policy, step=3, out_root=tmp_path, base="unit", dtype=torch.bfloat16
+    )
+    assert ckpt_dir.exists()
+    assert (ckpt_dir / "config.json").exists()
+    st_path = ckpt_dir / "pytorch_model.safetensors"
+    assert st_path.exists()
+    assert (ckpt_dir / "READY").exists()
+    tensors = load_file(str(st_path))
+    # Parameter key present
+    assert any(k.startswith("lin") for k in tensors.keys())
+    # Dtype cast check (bfloat16)
+    for t in tensors.values():
+        assert t.dtype == torch.bfloat16
+        break
+
+
+def test_hot_reload_vllm_from_dir(tmp_path: Path) -> None:
+    # Minimal directory to point at
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "READY").write_text("", encoding="utf-8")
+
+    class EngineCore:
+        def sleep(self) -> None:
+            pass
+
+        def wake_up(self) -> None:
+            pass
+
+    class EngineWrap:
+        def __init__(self) -> None:
+            self.engine_core = EngineCore()
+
+    class FakeLLM:
+        def __init__(self) -> None:
+            self.engine = EngineWrap()
+            self.calls: list[tuple[str, Any]] = []
+
+        def collective_rpc(self, name: str, args: Any = ()) -> None:
+            self.calls.append((name, args))
+
+    llm = FakeLLM()
+    sft.hot_reload_vllm_from_dir(llm, tmp_path)
+    assert [c[0] for c in llm.calls] == ["update_config", "reload_weights"]

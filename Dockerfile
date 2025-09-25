@@ -50,7 +50,7 @@ ENV VSCODE_CLI_DATA_DIR=/workspace/.vscode-cli \
     VSCODE_CLI_USE_FILE_KEYCHAIN=1 \
     VSCODE_AGENT_FOLDER=/workspace/.vscode-server
 
-# ---- (Optional) Install VS Code CLI at build time ----
+# ---- Install VS Code CLI at build time ----
 # Pin with VSCODE_VERSION=<version or commit> or leave as "latest"
 ARG VSCODE_CLI_OS=cli-linux-x64
 ARG VSCODE_VERSION=latest

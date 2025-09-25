@@ -24,7 +24,7 @@ import platform
 import random
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 # Optional heavy deps — make import resilient so this module works in data-only contexts
 try:
@@ -210,21 +210,19 @@ def system_info(info: dict[str, Any] | None = None) -> dict:
     return info
 
 
-if TYPE_CHECKING:
-    import wandb
+def wandb_run_init(project: str, name: str | None, config: dict[str, Any]) -> Any | None:
+    """
+    Lazy/optional W&B run init. Returns the Run object or None if wandb is unavailable.
 
+    Using Any to avoid mypy attr-defined issues (wandb stubs may be incomplete
+    for dynamic attributes in pinned versions).
+    """
+    try:
+        import wandb
 
-def wandb_run_init(project: str, name: str | None, config: dict) -> wandb.sdk.wandb_run.Run:
-    import wandb
-
-    run = wandb.init(
-        project=project,
-        name=name,
-        config=config,
-        save_code=True,
-        reinit=False,
-    )
-    return run
+        return wandb.init(project=project, name=name, config=config)
+    except Exception:
+        return None
 
 
 def dataset_revision(dataset_id: str, config_name: str = "main") -> tuple[str, str]:

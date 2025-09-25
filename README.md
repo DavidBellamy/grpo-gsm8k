@@ -39,7 +39,7 @@ This will:
 
 ## Generate GSM8k Splits
 
-We reserve 512 problems from the original training set for the validation split. 
+We reserve 512 problems from the original training set for the validation split.
 
 ```python
 python -m grpo_gsm8k.data_prep \
@@ -98,24 +98,14 @@ On the first pod you deploy, run:
 ```
 
 
-4. **Secrets**: store `WANDB_API_KEY` as a secret (don’t expose as plain env var).
-5. **Command**: default `bash` is fine; the image’s `entrypoint.sh` will:
-
-   * load determinism/env shims (`/etc/profile.d/env.det.sh`)
-   * ensure `/workspace` exists
-   * set caches to `/workspace/.cache`
-   * create/activate a persistent venv at `/workspace/.venv` (via `uv`)
-   * (best-effort) start a VS Code tunnel if `VSCODE_TUNNEL_NAME` is set
-
-Then exec into the pod or use the tunnel and run the same command as in **Quickstart**.
-
-> **What’s RunPod-specific here?** Only **how** you attach a network volume at `/workspace` and **where** you set env vars/secrets in the RunPod UI. The env names themselves are generic.
+4. **Secrets**: store `WANDB_API_KEY` as a secret.
+5. **Command**: default `bash` is fine; the image’s `entrypoint.sh` will set up env + venv.
 
 ---
 
 ## Portable usage (works anywhere the image runs)
 
-### One-shot pipeline (sysinfo → data prep → vLLM eval → locks → data snapshot)
+### One-shot pipeline
 
 ```bash
 python -m grpo_gsm8k.cli eval \
@@ -134,20 +124,10 @@ python -m grpo_gsm8k.cli eval \
   --cache_dir "/workspace/.cache/huggingface"
 ```
 
-### Prepare data only (defaults)
+### Prepare data (defaults)
 
 ```bash
 python -m grpo_gsm8k.data_prep
-```
-
-### Prepare data with custom args
-
-```bash
-python - <<'PY'
-from grpo_gsm8k.data_prep import main
-main(out_dir="artifacts/gsm8k", seed=31415, eval_n=800, revision="main",
-     cache_dir="/workspace/.cache/huggingface")
-PY
 ```
 
 ### vLLM eval only
@@ -163,77 +143,71 @@ python -m grpo_gsm8k.fast_eval_vllm \
 
 ---
 
-## Developer setup (only if you’re modifying the image or code)
+## Developer setup (editable install + tests)
 
-These steps are for contributors. End users can stick to the **Quickstart**.
-
-The stack: this repo uses `uv` for Python packages, `ruff` for linting/formatting, `mypy` for type checking, `docker` for building container images, `wandb` for logging experiments, `pytest` for tests, and is designed to run on Ubuntu 22.04 ("Jammy") with CUDA 12.8 with Python 3.10, PyTorch 2.7 and vLLM 0.10.
-
-### Local tooling
+From project root:
 
 ```bash
-# macOS (example)
-brew install docker uv python@3.10
-
-# clone
-git clone https://github.com/DavidBellamy/grpo-gsm8k.git
-cd grpo-gsm8k
-
-# pre-commit hooks (optional but recommended)
-uv tool install pre-commit
-uv tool run pre-commit install
-uv tool run pre-commit run --all-files
-
-# lockfile for reproducible Python deps
-uv lock --python 3.10
+# Runtime deps only
+uv sync
+# Add dev tools (pytest, ruff, mypy, pre-commit)
+uv sync --dev
+uv pip install -e .
+# Run full test suite
+pytest
+# Or quiet
+pytest -q
 ```
 
-### Build the image (optional)
++ To include slow tests (those marked with @pytest.mark.slow), run:
++
++ ```bash
++ pytest --runslow
++ ```
++
++ To run only the slow tests:
++ ```bash
++ pytest -m slow --runslow
++ ```
 
-Note: it is much quicker to build the image and push it to GHCR on a GitHub runner via GitHub Actions.
+Alternative one-shot (no editable install, just add src on path):
 
 ```bash
-# Generic build (host arch)
-docker build -t grpo-gsm8k .
-
-# Cross-build for linux/amd64 (useful on Apple Silicon when targeting x86_64 GPU hosts)
-docker buildx build --platform=linux/amd64 -t grpo-gsm8k .
+PYTHONPATH=. uv run python -m pytest -q
 ```
 
-### Publish to GHCR (optional)
+Lint / format / type-check:
 
 ```bash
-# login (requires PAT with write:packages)
-echo <YOUR_GITHUB_PAT> | docker login ghcr.io -u <GITHUB_USERNAME> --password-stdin
-
-# tag & push
-docker tag grpo-gsm8k:latest ghcr.io/<GITHUB_USERNAME>/grpo-gsm8k:latest
-docker push ghcr.io/<GITHUB_USERNAME>/grpo-gsm8k:latest
-
-# alt: build & push in one step
-# docker buildx build --platform=linux/amd64 \
-#   -t ghcr.io/<GITHUB_USERNAME>/grpo-gsm8k:latest \
-#   --push .
+ruff check .
+ruff format .
+mypy grpo_gsm8k
 ```
+
+---
+
+## Developer tooling & tests (summary)
+
+| Task | Command |
+|------|---------|
+| Install runtime | uv sync |
+| Install runtime + dev | uv sync --dev |
+| Editable install | uv pip  install -e . |
+| Run tests | pytest |
+| Run tests (incl. slow) | pytest --runslow |
+| Lint | ruff check . |
+| Format | ruff format . |
+| Type-check | mypy grpo_gsm8k |
 
 ---
 
 ## Artifacts & reproducibility
 
-* **Run dirs:** `artifacts/runs/<UTCSTAMP>_<gitsha>/`
+* Run dirs: `artifacts/runs/<UTCSTAMP>_<gitsha>/`
+* Datasets: `artifacts/gsm8k/{train,val,test}.jsonl`
+* Baselines: `artifacts/baselines/*.jsonl`
 
-  * `sys/…` — driver/GPU/topo, env, `pip.freeze`, timestamps, etc.
-  * `run_manifest.json` — environment + package versions
-  * `locks/requirements.lock.txt` — exact deps used (`uv export --strict`)
-  * `data.sha256` — checksums for `/data` (from `scripts/snapshot_dataset.sh`)
-* **Datasets:** `artifacts/gsm8k/{train,test,val}.jsonl` and optional HF snapshot `artifacts/gsm8k_hf_snapshot/`
-* **Baselines:** `artifacts/baselines/*.jsonl` — inputs, model outputs, reward, gold
-
-**Determinism toggles**
-
-* Container defaults favor speed (`NVIDIA_TF32_OVERRIDE=1` in the Dockerfile). For stricter reproducibility at runtime set `NVIDIA_TF32_OVERRIDE=0` and call `seed_everything(..., deterministic=True)` (see `repro.py`).
-* Additional env defaults in `scripts/env.det.sh`:
-  `CUBLAS_WORKSPACE_CONFIG=:4096:8`, `TOKENIZERS_PARALLELISM=false`, `PYTHONHASHSEED=0`, `OMP_NUM_THREADS=1`.
+Determinism: set `NVIDIA_TF32_OVERRIDE=0` and seed via `repro.py` if needed.
 
 ---
 
@@ -242,62 +216,21 @@ docker push ghcr.io/<GITHUB_USERNAME>/grpo-gsm8k:latest
 ```
 grpo-gsm8k/
 ├── grpo_gsm8k/
-│   ├── cli.py                # sysinfo → data prep → vLLM eval → locks → snapshots
-│   ├── data_prep.py          # fetch + pin GSM8K; write JSONL and optional HF snapshot
-│   ├── fast_eval_vllm.py     # baseline eval via vLLM (greedy, temp=0)
-│   ├── prompts.py            # Qwen-style chat templates; batch rendering helpers
-│   ├── repro.py              # seeds, manifests, sampling params, env capture
-│   └── reward_fn.py          # parse \boxed{...}; exact-match vs GSM8K gold
-├── scripts/                  # sysinfo, env, locks, dataset snapshot, remote sync (rclone/B2)
 ├── tests/
-├── Dockerfile                # CUDA 12.8, uv, snapshot-locked apt
-├── pyproject.toml            # deps, linters, pytest config, uv cu128 index
-└── artifacts/                # outputs (created at runtime)
-```
-
----
-
-## Developer tooling & tests
-
-```bash
-uv sync --dev
-pre-commit install
-pre-commit run --all-files
-```
-
-Run (non-slow) tests locally with:
-```bash
-PYTHONPATH=. uv run --no-project \
-  --with pytest,pytest-asyncio,aiohttp,datasets,torch,transformers,vllm \
-  python -m pytest -q
-```
-
-Run parity tests in the same environment as RunPod (container, no GPU) with:
-```bash
-docker run --rm -it -v "$PWD":/workspace ghcr.io/davidbellamy/grpo-gsm8k:latest \
-  bash -lc 'pytest -q -m "not slow"'
-```
-
-Run all tests (incl. ones needing GPU) with:
-```bash
-docker run --rm -it --gpus all -v "$PWD":/workspace ghcr.io/davidbellamy/grpo-gsm8k:latest \
-  bash -lc 'pytest -q'
+├── artifacts/
+└── pyproject.toml
 ```
 
 ---
 
 ## Troubleshooting
 
-* **No GPUs in Docker**: install/configure NVIDIA Container Toolkit; run with `--gpus all`.
-* **CUDA OOM**: reduce `--max_new_tokens`, lower `--gpu_mem_util` (e.g., `0.80`), increase `--tp_size`, or switch to a smaller model.
-* **Slow downloads**: mount a persistent HF cache (`-v $HOME/.cache/huggingface:/workspace/.cache/huggingface`).
-* **Pin dataset revision**: pass `--revision <commit-or-tag>` to `cli eval` (propagates to `datasets.load_dataset`).
-* **WANDB offline/online**: use `WANDB_MODE=offline` locally; store `WANDB_API_KEY` as a secret on your provider.
+* Module not found: ensure `uv pip install -e .` or run with `PYTHONPATH=.`
+* Dev deps missing: run `uv sync --dev`
+* CUDA OOM: lower `--gpu_mem_util` or use smaller model
 
 ---
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
-
----
+MIT — see `LICENSE`.

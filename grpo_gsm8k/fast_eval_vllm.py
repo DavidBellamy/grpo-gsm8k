@@ -28,6 +28,7 @@ def main(
 ) -> None:
     seed_everything(SEED, deterministic=False)
     run = wandb_run_init(wandb_project, run_name, dict(model_id=model_id, tp_size=tp_size))
+    assert run is not None, "wandb_run_init returned None (W&B disabled?)"
 
     tok = AutoTokenizer.from_pretrained(model_id, use_fast=True)
     # Ensure a pad token and left padding even if not strictly needed by vLLM

@@ -537,7 +537,7 @@ wheels = [
 [[package]]
 name = "grpo-gsm8k"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "accelerate", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "datasets", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
@@ -551,11 +551,12 @@ dependencies = [
     { name = "wandb", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "mypy", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "pre-commit", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "pytest", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+    { name = "pytest-asyncio", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "ruff", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
 ]
 
@@ -563,11 +564,7 @@ dev = [
 requires-dist = [
     { name = "accelerate", specifier = ">=0.34.1,<1.0" },
     { name = "datasets", specifier = ">=2.20,<2.21" },
-    { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10,<1.15" },
     { name = "numpy", specifier = ">=2,<3" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7,<5" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7,<9" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5,<0.7" },
     { name = "tokenizers", specifier = ">=0.21,<0.22" },
     { name = "torch", marker = "sys_platform != 'linux'", specifier = ">=2.7,<2.8.999" },
     { name = "torch", marker = "sys_platform == 'linux'", specifier = ">=2.7,<2.8.999", index = "https://download.pytorch.org/whl/cu128" },
@@ -579,7 +576,15 @@ requires-dist = [
     { name = "vllm", specifier = ">=0.9,<0.11" },
     { name = "wandb", specifier = ">=0.17,<0.19" },
 ]
-provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.10,<1.15" },
+    { name = "pre-commit", specifier = ">=3.7,<5" },
+    { name = "pytest", specifier = ">=7,<9" },
+    { name = "pytest-asyncio", specifier = ">=0.23,<0.25" },
+    { name = "ruff", specifier = ">=0.5,<0.7" },
+]
 
 [[package]]
 name = "h11"
@@ -1451,6 +1456,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a3/5c/00a0e072241553e1a7496d638deababa67c5058571567b92a7eaa258397c/pytest-8.4.2.tar.gz", hash = "sha256:86c0d0b93306b961d58d62a4db4879f27fe25513d4b969df351abdddb3c30e01", size = 1519618, upload-time = "2025-09-04T14:34:22.711Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a8/a4/20da314d277121d6534b3a980b29035dcd51e6744bd79075a6ce8fa4eb8d/pytest-8.4.2-py3-none-any.whl", hash = "sha256:872f880de3fc3a5bdc88a11b39c9710c3497a547cfa9320bc3c5e62fbf272e79", size = 365750, upload-time = "2025-09-04T14:34:20.226Z" },
+]
+
+[[package]]
+name = "pytest-asyncio"
+version = "0.24.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/52/6d/c6cf50ce320cf8611df7a1254d86233b3df7cc07f9b5f5cbcb82e08aa534/pytest_asyncio-0.24.0.tar.gz", hash = "sha256:d081d828e576d85f875399194281e92bf8a68d60d72d1a2faf2feddb6c46b276", size = 49855, upload-time = "2024-08-22T08:03:18.145Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/31/6607dab48616902f76885dfcf62c08d929796fc3b2d2318faf9fd54dbed9/pytest_asyncio-0.24.0-py3-none-any.whl", hash = "sha256:a811296ed596b69bf0b6f3dc40f83bcaf341b155a269052d82efa2b25ac7037b", size = 18024, upload-time = "2024-08-22T08:03:15.536Z" },
 ]
 
 [[package]]

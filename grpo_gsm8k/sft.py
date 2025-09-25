@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable
+import os
+import shutil
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import torch
+import wandb
+from safetensors.torch import save_file
+from torch.nn.utils import clip_grad_norm_
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -87,36 +94,136 @@ def sft_microbatch_train_step(
     return loss, metadata
 
 
-def init_vllm(model_id: str, device: str, seed: int, gpu_memory_utilization: float = 0.85) -> LLM:
+@contextmanager
+def _temp_cuda_visible(devices: str | None) -> Iterator[None]:
+    prev = os.environ.get("CUDA_VISIBLE_DEVICES")
+    try:
+        if devices is not None:
+            # Accept "cuda:1" or "1"
+            dev = devices.replace("cuda:", "") if isinstance(devices, str) else str(devices)
+            os.environ["CUDA_VISIBLE_DEVICES"] = dev
+        yield
+    finally:
+        if prev is None:
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = prev
+
+
+def init_vllm(
+    model_id: str,
+    device: str,
+    seed: int,
+    gpu_memory_utilization: float = 0.85,
+    *,
+    model_dtype: torch.dtype = torch.bfloat16,
+) -> LLM:
     """
-    Start the inference process, here we use vLLM to hold a model on
-    a GPU separate from the policy
+    Initialize a vLLM LLM with an explicit dtype override (default bfloat16).
+
+    vLLM versions that do not accept a `device` kwarg require scoping via
+    CUDA_VISIBLE_DEVICES; we map e.g. 'cuda:1' -> '1' and set it temporarily.
     """
     vllm_set_random_seed(seed)
-
     world_size_patch = patch("torch.distributed.get_world_size", return_value=1)
     profiling_patch = patch(
         "vllm.worker.worker.Worker._assert_memory_footprint_increased_during_profiling",
         return_value=None,
     )
-    with world_size_patch, profiling_patch:
+
+    # Use env scoping instead of passing `device=` (not supported in this vLLM)
+    with world_size_patch, profiling_patch, _temp_cuda_visible(device):
         return LLM(
             model=model_id,
-            device=device,
-            dtype=torch.bfloat16,
+            dtype=model_dtype,
             enable_prefix_caching=True,
             gpu_memory_utilization=gpu_memory_utilization,
         )
 
 
-def load_policy_into_vllm_instance(policy: PreTrainedModel, llm: LLM) -> None:
+# --- lightweight safetensors checkpoint for hot-reload ---
+def save_policy_checkpoint_for_vllm(
+    policy: PreTrainedModel,
+    step: int,
+    *,
+    out_root: str | Path = "/dev/shm",
+    base: str = "qwen15b_step",
+    dtype: torch.dtype = torch.bfloat16,
+) -> Path:
     """
-    Copied from https://github.com/huggingface/trl/blob/
-    22759c820867c8659d00082ba8cf004e963873c1/trl/trainer/grpo_trainer.py#L670
+    Write a weights-only HF-style folder:
+      /dev/shm/{base}_{step}/
+        - config.json
+        - pytorch_model.safetensors
+        - READY (marker)
+
+    Directory is staged via a .tmp dir then atomically renamed.
     """
-    state_dict = policy.state_dict()
-    llm_model = llm.llm_engine.model_executor.driver_worker.model_runner.model
-    llm_model.load_weights(state_dict.items())
+    out_root = Path(out_root)
+    tmp_dir = out_root / f"{base}_{step}.tmp"
+    final_dir = out_root / f"{base}_{step}"
+    ready = final_dir / "READY"
+
+    if tmp_dir.exists():
+        shutil.rmtree(tmp_dir)
+    if final_dir.exists():
+        logger.warning("Overwriting existing %s", final_dir)
+        shutil.rmtree(final_dir)
+
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    # config.json
+    cfg_json = policy.config.to_json_string()
+    (tmp_dir / "config.json").write_text(cfg_json, encoding="utf-8")
+
+    # safetensors weights (cast + move to cpu)
+    state: dict[str, torch.Tensor] = {}
+    with torch.no_grad():
+        for k, v in policy.state_dict().items():
+            state[k] = v.detach().to(dtype).to("cpu", non_blocking=True).contiguous()
+    save_file(state, str(tmp_dir / "pytorch_model.safetensors"))
+
+    # Atomic publish
+    try:
+        os.sync()
+    except Exception:
+        pass
+    os.rename(tmp_dir, final_dir)
+    ready.touch()
+    logger.info("Wrote vLLM checkpoint: %s", final_dir)
+    return final_dir
+
+
+def hot_reload_vllm_from_dir(llm: LLM, ckpt_dir: str | Path) -> None:
+    """
+    Ask a local vLLM engine to reload weights in-place from a prepared directory.
+    """
+    eng = getattr(llm, "engine", None) or getattr(llm, "llm_engine", None)
+    assert eng is not None, "Could not find LLM engine on the LLM object."
+
+    # Best-effort pause
+    try:
+        eng.engine_core.sleep()
+    except Exception:
+        pass
+
+    # Update config + reload
+    llm.collective_rpc(
+        "update_config",
+        args=(
+            {
+                "model_config": {"model": str(ckpt_dir)},
+                "load_config": {"load_format": "safetensors"},
+            },
+        ),
+    )
+    llm.collective_rpc("reload_weights")
+
+    # Wake engine
+    try:
+        eng.engine_core.wake_up()
+    except Exception:
+        pass
 
 
 # -----------------------------
@@ -262,33 +369,77 @@ def _vllm_generate(
     return {"responses": responses, "avg_response_length": avg_len}
 
 
+# Add: checkpoint-and-reload path for vLLM eval (no hot-loading)
+def _vllm_eval_from_checkpoint(
+    model: PreTrainedModel,
+    tokenizer: PreTrainedTokenizer,
+    prompts: list[str],
+    *,
+    step: int,
+    device: str,
+    gpu_memory_utilization: float,
+    max_new_tokens: int = 128,
+) -> dict[str, Any]:
+    """
+    Save a lightweight checkpoint and run vLLM from it on the eval GPU.
+    Avoids touching vLLM internals.
+    """
+    tmp_root = Path("artifacts/tmp_vllm_eval")
+    ckpt_dir = tmp_root / f"step_{step}"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    model.save_pretrained(ckpt_dir)
+    tokenizer.save_pretrained(ckpt_dir)
+
+    with _temp_cuda_visible(device):
+        llm_tmp = LLM(
+            model=str(ckpt_dir),
+            dtype="bfloat16",
+            enable_prefix_caching=True,
+            gpu_memory_utilization=gpu_memory_utilization,
+        )
+    try:
+        return _vllm_generate(
+            llm_tmp,
+            prompts,
+            max_new_tokens=max_new_tokens,
+            temperature=0.0,
+            top_p=1.0,
+        )
+    finally:
+        shutdown = getattr(llm_tmp, "shutdown", None)
+        if callable(shutdown):
+            try:
+                shutdown()
+            except Exception:
+                pass
+
+
 def train_sft_on_r1_pairs(
     data_path: str | Path,
     *,
-    model_id: str = "Qwen/Qwen2.5-Math-1.5B-Instruct",
-    device: str | torch.device | None = None,
+    model_id: str = "Qwen/Qwen2.5-Math-1.5B",
+    device: str | torch.device = "cuda:0",
+    vllm_device: str | None = "cuda:1",
+    vllm_gpu_memory_utilization: float = 0.85,
     microbatch_size: int = 2,
     gradient_accumulation_steps: int = 8,
     num_epochs: int = 1,
     max_steps: int | None = None,
     learning_rate: float = 1e-5,
+    adamw_beta1: float = 0.9,
+    adamw_beta2: float = 0.95,
+    adamw_eps: float = 1e-8,
     weight_decay: float = 0.0,
+    max_grad_norm: float | None = 1.0,
     max_total_tokens: int | None = 2048,
     log_every: int = 10,
     eval_every: int = 200,
     eval_examples: int = 4,
-    dtype: torch.dtype | None = None,
-    # vLLM eval on a second GPU
-    do_vllm_eval: bool = True,
-    vllm_device: str | None = "cuda:1",
-    vllm_gpu_memory_utilization: float = 0.85,
-    # Optional W&B logging callback: wb_log(step, metrics)
+    model_dtype: torch.dtype | None = None,
     wb_log: Callable[[int, dict[str, float]], None] | None = None,
-    # Optional: checkpointing and eval callback
     checkpoint_dir: str | Path | None = None,
     checkpoint_every: int | None = None,
     on_eval: Callable[[int, dict[str, Any]], None] | None = None,
-    # Optional: resume from a previous checkpoint directory
     resume_from: str | Path | None = None,
 ) -> dict[str, Any]:
     """
@@ -303,7 +454,7 @@ def train_sft_on_r1_pairs(
     elif isinstance(device, torch.device):
         device_t = device
     else:
-        device_t = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        raise ValueError("device must be a string (e.g., 'cuda:0') or a torch.device instance.")
 
     # Resolve resume path if provided
     load_path: str | Path = model_id
@@ -318,13 +469,18 @@ def train_sft_on_r1_pairs(
     # Ensure decoder-only models use left padding for correct generation
     tok.padding_side = "left"
 
-    if dtype is None:
-        dtype = (
-            torch.bfloat16
-            if (device_t.type == "cuda" and torch.cuda.is_bf16_supported())
-            else torch.float32
-        )
-    model = AutoModelForCausalLM.from_pretrained(load_path, torch_dtype=dtype)
+    if model_dtype is None:
+        if device_t.type == "cuda":
+            if torch.cuda.is_bf16_supported():
+                model_dtype = torch.bfloat16
+            else:
+                logger.warning("CUDA device does not support bfloat16; falling back to float16.")
+                model_dtype = torch.float16
+        else:
+            # Allow CPU execution for tests / debugging (use fp32)
+            model_dtype = torch.float32
+
+    model = AutoModelForCausalLM.from_pretrained(load_path, torch_dtype=model_dtype)
     # Keep model configs in sync with tokenizer pad token
     if tok.pad_token_id is not None:
         model.config.pad_token_id = tok.pad_token_id
@@ -334,18 +490,45 @@ def train_sft_on_r1_pairs(
     model.to(device_t)
     model.train()
 
-    # Optional vLLM instance for eval on separate GPU
+    # vLLM instance for eval on separate GPU
     llm: LLM | None = None
-    if do_vllm_eval and vllm_device is not None:
+    if vllm_device is not None:
         try:
             # Positional args for compatibility with monkeypatched fakes in tests
             llm = init_vllm(model_id, vllm_device, 42, vllm_gpu_memory_utilization)
             logger.info("Initialized vLLM on %s for eval", vllm_device)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Failed to init vLLM: %s", e)
-            llm = None
+        except Exception as e:
+            raise RuntimeError(f"Could not initialize vLLM on {vllm_device}: {e}") from e
+    else:
+        raise ValueError("vllm_device must be a string (e.g., 'cuda:1')")
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    # Build AdamW with no-decay for bias/LayerNorm/embeddings
+    decay_params: list[torch.nn.Parameter] = []
+    no_decay_params: list[torch.nn.Parameter] = []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        n = name.lower()
+        if (
+            param.ndim == 1
+            or name.endswith(".bias")
+            or "layernorm" in n
+            or "layer_norm" in n
+            or "embed" in n
+        ):
+            no_decay_params.append(param)
+        else:
+            decay_params.append(param)
+
+    optimizer = torch.optim.AdamW(
+        [
+            {"params": decay_params, "weight_decay": weight_decay},
+            {"params": no_decay_params, "weight_decay": 0.0},
+        ],
+        lr=learning_rate,
+        betas=(adamw_beta1, adamw_beta2),
+        eps=adamw_eps,
+    )
     optimizer.zero_grad(set_to_none=True)
 
     # Load and lightly validate data
@@ -359,9 +542,14 @@ def train_sft_on_r1_pairs(
     # Training loop
     step = 0
     total_tokens = 0
+    total_nonpad_tokens = 0  # counts all non-pad (prompt+response) tokens
     total_loss = 0.0
     total_entropy = 0.0
     total_entropy_count = 0.0
+    start_time = time.perf_counter()
+
+    # Cumulative W&B table for eval samples (created lazily if wandb is available)
+    eval_samples_table: Any | None = None
 
     for epoch in range(num_epochs):
         logger.info("Epoch %d starting (%d examples)", epoch + 1, len(records))
@@ -396,6 +584,8 @@ def train_sft_on_r1_pairs(
             # Build attention mask: non-pad tokens are 1
             pad_id = tok.pad_token_id if tok.pad_token_id is not None else tok.eos_token_id or 0
             attention_mask = (input_ids != pad_id).long()
+            nonpad_token_count = int(attention_mask.sum().item())
+            total_nonpad_tokens += nonpad_token_count
 
             # Use positional args to avoid keyword name mismatches in tests' fakes
             outputs = model(input_ids, attention_mask)
@@ -432,16 +622,22 @@ def train_sft_on_r1_pairs(
             step += 1
             # Optimizer step on accumulation boundary
             if step % gradient_accumulation_steps == 0:
+                # Gradient clipping before stepping
+                if max_grad_norm is not None and max_grad_norm > 0:
+                    clip_grad_norm_(model.parameters(), max_grad_norm)
                 optimizer.step()
                 optimizer.zero_grad(set_to_none=True)
 
             if step % log_every == 0:
+                elapsed = time.perf_counter() - start_time
+                tps_response = total_tokens / max(elapsed, 1e-9)
+                tps_nonpad = total_nonpad_tokens / max(elapsed, 1e-9)
                 avg_lp = meta["mean_log_prob_response"].item()
                 avg_nll = meta["mean_nll_response"].item()
                 logger.info(
                     (
                         "step=%d epoch=%d mb=[%d:%d] mean_lp=%.4f mean_nll=%.4f "
-                        "mean_ent=%.4f tokens=%d"
+                        "mean_ent=%.4f resp_tokens=%d tps_resp=%.1f tps_nonpad=%.1f"
                     ),
                     step,
                     epoch + 1,
@@ -451,8 +647,17 @@ def train_sft_on_r1_pairs(
                     avg_nll,
                     mean_resp_entropy,
                     int(resp_token_count),
+                    tps_response,
+                    tps_nonpad,
                 )
                 if wb_log is not None:
+                    wb_log(
+                        step,
+                        {
+                            "perf/tokens_per_sec_response": float(tps_response),
+                            "perf/tokens_per_sec_nonpad": float(tps_nonpad),
+                        },
+                    )
                     wb_log(
                         step,
                         {
@@ -464,7 +669,7 @@ def train_sft_on_r1_pairs(
                     )
 
             if eval_every and step % eval_every == 0:
-                # Sample a small subset for eval
+                # Choose the first `eval_examples` from the val set for eval
                 sample_qs = prompts_raw[: max(1, min(eval_examples, len(prompts_raw)))]
                 chat_prompts_eval = _build_qwen_chat_prompts(tok, sample_qs)
 
@@ -498,6 +703,24 @@ def train_sft_on_r1_pairs(
                             "eval/avg_response_length": float(gen_log["avg_response_length"]),
                         },
                     )
+
+                # Cumulatively log all eval prompts/responses to a W&B Table
+                try:
+                    if eval_samples_table is None:
+                        eval_samples_table = wandb.Table(
+                            columns=["step", "idx", "prompt_raw", "chat_prompt", "response"]
+                        )
+                    # Append rows for this eval batch
+                    responses_eval = gen_log.get("responses", []) or []
+                    for i, (q_raw, chat_p, resp) in enumerate(
+                        zip(sample_qs, chat_prompts_eval, responses_eval)
+                    ):
+                        eval_samples_table.add_data(int(step), int(i), q_raw, chat_p, resp)
+                    # Log (re-log the same table so it grows over time)
+                    wandb.log({"eval/samples": eval_samples_table}, step=step)
+                except Exception as _e:  # noqa: BLE001
+                    # Silently skip if wandb isn't available or logging fails
+                    pass
 
                 # 2) Quick score-only eval using get_response_log_probs on a few pairs
                 val_pairs = records[: max(1, min(eval_examples, len(records)))]
@@ -541,33 +764,37 @@ def train_sft_on_r1_pairs(
                         },
                     )
 
-                # 3) vLLM generation on the other GPU, sync weights just-in-time
-                if llm is not None:
-                    try:
-                        load_policy_into_vllm_instance(model, llm)
-                        vllm_out = _vllm_generate(
-                            llm,
-                            chat_prompts_eval,
-                            max_new_tokens=128,
-                            temperature=0.0,
-                            top_p=1.0,
+                # 3) vLLM eval on other GPU using persistent engine + hot reload
+                try:
+                    ckpt_dir = save_policy_checkpoint_for_vllm(
+                        model,
+                        step,
+                        out_root="/dev/shm",
+                        base="qwen15b_step",
+                        dtype=torch.bfloat16,
+                    )
+                    hot_reload_vllm_from_dir(llm, ckpt_dir)
+                    vllm_out = _vllm_generate(
+                        llm,
+                        chat_prompts_eval,
+                        max_new_tokens=128,
+                        temperature=0.0,
+                        top_p=1.0,
+                    )
+                    logger.info(
+                        "eval (vLLM hot): avg_length=%.2f example=%s",
+                        vllm_out["avg_response_length"],
+                        (vllm_out["responses"][0] if vllm_out["responses"] else ""),
+                    )
+                    if wb_log is not None:
+                        wb_log(
+                            step,
+                            {
+                                "eval/avg_response_length": float(vllm_out["avg_response_length"]),
+                            },
                         )
-                        logger.info(
-                            "eval (vLLM): avg_length=%.2f example=%s",
-                            vllm_out["avg_response_length"],
-                            (vllm_out["responses"][0] if vllm_out["responses"] else ""),
-                        )
-                        if wb_log is not None:
-                            wb_log(
-                                step,
-                                {
-                                    "eval_vllm/avg_response_length": float(
-                                        vllm_out["avg_response_length"]
-                                    ),
-                                },
-                            )
-                    except Exception as e:  # noqa: BLE001
-                        logger.warning("vLLM eval failed: %s", e)
+                except Exception as e:  # noqa: BLE001
+                    raise RuntimeError(f"vLLM hot-reload eval failed: {e}") from e
 
             # Checkpointing
             if checkpoint_dir is not None and checkpoint_every is not None:
@@ -598,11 +825,10 @@ def train_sft_on_r1_pairs(
         "avg_response_token_entropy": float(avg_entropy),
         "model_id": model_id,
         "device": str(device_t),
-        "dtype": str(dtype).replace("torch.", ""),
+        "model_dtype": str(model_dtype).replace("torch.", ""),
     }
-    if wb_log is not None:
-        wb_log(
-            step,
-            {f"final/{k}": float(v) for k, v in final.items() if isinstance(v, int | float)},
-        )
+
+    if wandb is not None and wandb.run is not None:
+        wandb.log({f"final/{k}": v for k, v in final.items()}, step=step)
+        wandb.run.summary.update({f"final/{k}": v for k, v in final.items()})
     return final
