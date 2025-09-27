@@ -24,7 +24,7 @@ def log_generations(
     prompts: list[str],
     references: list[str] | None = None,
     *,
-    max_new_tokens: int = 128,
+    max_new_tokens: int = 2048,
     temperature: float = 0.0,
     top_p: float = 1.0,
     reward_fn: RewardFn | None = None,

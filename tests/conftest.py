@@ -2,7 +2,7 @@ import pytest
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
-    parser.addoption("--runslow", action="store_true", help="run tests marked slow")
+    parser.addoption("--runslow", action="store_true", default=False, help="run tests marked slow")
 
 
 def pytest_configure(config: pytest.Config) -> None:

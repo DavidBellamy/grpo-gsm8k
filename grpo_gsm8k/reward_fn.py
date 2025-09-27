@@ -56,6 +56,18 @@ def exact_match(
     return int(normalize_number(pred_str) == normalize_number(gold))
 
 
+def _ngram_repetition_ratio(tokens: list[int], n: int = 3) -> float:
+    """
+    Simple repetition proxy: unique n-grams / total n-grams (lower means more repetition).
+    Returns 1.0 when sequence is too short to form at least two n-grams.
+    """
+    if len(tokens) < n + 1:
+        return 1.0
+    total = len(tokens) - n + 1
+    seen = {tuple(tokens[i : i + n]) for i in range(total)}
+    return len(seen) / total
+
+
 def reward_from_text(
     pred: str,
     gold_solution: str,
@@ -79,5 +91,4 @@ def reward_from_text(
         >>> reward_from_text("The answer is \\\\boxed{42}.", "#### 42", parser="boxed")
         1.0
     """
-
     return float(exact_match(pred, gold_solution, parser))

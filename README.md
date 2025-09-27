@@ -69,6 +69,71 @@ uv run --no-project --with aiohttp \
     --limit 5
 ```
 
+## Pre-tokenize R1 SFT pairs (optional)
+
+Before SFT, pre-tokenize the prompt/response pairs from `artifacts/r1_sft_pairs.jsonl` into fixed-length tensor shards that match the trainer’s expectations in [grpo_gsm8k/sft.py](grpo_gsm8k/sft.py). This uses the same chat rendering and tokenization helpers as training: [`grpo_gsm8k.prompts.render_batch`](grpo_gsm8k/prompts.py) and [`grpo_gsm8k.tokenize.tokenize_prompt_and_output`](grpo_gsm8k/tokenize.py).
+
+- Tokenize to `.pt` shards (N, T) with `input_ids`, `labels`, `response_mask`, plus `pad_token_id` and `meta`:
+
+```bash
+uv run python scripts/pretokenize_r1_pairs.py \
+  --model_id "Qwen/Qwen2.5-Math-1.5B" \
+  --infile artifacts/r1_sft_pairs.jsonl \
+  --out_dir artifacts/tokenized \
+  --max_total_tokens 2048
+```
+
+- Notes:
+  - Left padding; set T to your train `--max_total_tokens` (default 2048).
+  - Build `attention_mask` at load time as `(input_ids != pad_token_id).long()`.
+  - Format aligns with the trainer’s per-step tensors; you can stream microbatches directly to GPU.
+
+---
+
+## Prepare GSM8K validation set for vLLM evaluation (required for SFT)
+
+To evaluate Qwen checkpoints during SFT, you must pre-render the GSM8K validation set questions into Qwen chat prompts and parse the ground truth numeric answers. This is required for async vLLM eval during SFT.
+
+- Prepare the eval set:
+
+```bash
+uv run python scripts/prep_val_for_vllm.py \
+  --model_id "Qwen/Qwen2.5-Math-1.5B" \
+  --infile artifacts/gsm8k/val.jsonl \
+  --outfile artifacts/tokenized/val_for_vllm.jsonl
+```
+
+- The output JSONL contains:
+  - `prompt`: Qwen chat-templated prompt for vLLM generation
+  - `gold`: original ground truth answer string (for logging)
+  - `gold_num`: normalized numeric answer (for exact-match evaluation)
+
+- **Note:** SFT requires this pre-rendered eval set. If not provided, training will halt with an error.
+
+---
+
+## SFT with strict async vLLM evaluation
+
+During SFT, async vLLM evaluation is always enabled and strictly requires a pre-rendered eval set (`artifacts/tokenized/val_for_vllm.jsonl`). No fallback or disabling is allowed.
+
+- Example SFT run:
+
+```bash
+python -m grpo_gsm8k.cli sft \
+  --data_path artifacts/r1_sft_pairs.jsonl \
+  --model_id Qwen/Qwen2.5-Math-1.5B \
+  --vllm_device cuda:1 \
+  --eval_set_path artifacts/tokenized/val_for_vllm.jsonl \
+  --eval_every 4 \
+  --eval_examples 64
+```
+
+- If `--eval_set_path` is missing or invalid, training will halt with an error.
+
+- During evaluation, the trainer:
+  - Uses only the pre-rendered prompts and numeric golds for vLLM generation and exact-match.
+  - Logs the original ground truth answer string alongside Qwen-generated reasoning to W&B.
+
 ---
 
 ## Run on RunPod (provider notes)

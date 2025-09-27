@@ -31,9 +31,9 @@ annotated-types==0.7.0 ; platform_machine == 'x86_64' and sys_platform == 'linux
     --hash=sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53 \
     --hash=sha256:aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89
     # via pydantic
-anyio==4.10.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:3f3fae35c96039744587aa5b8371e7e8e603c0702999535961dd336026973ba6 \
-    --hash=sha256:60e474ac86736bbfd6f210f7a61218939c318f43f9972497381f1c5e930ed3d1
+anyio==4.11.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:0287e96f4d26d4149305414d4e3bc32f0dcd0862365a4bddea19d7a1ec38c4fc \
+    --hash=sha256:82a8d0b81e318cc5ce71a5f1f8b5c4e63619620b63141ef8c995fa0db95a57c4
     # via
     #   httpx
     #   openai
@@ -54,13 +54,13 @@ attrs==25.3.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     #   aiohttp
     #   jsonschema
     #   referencing
-blake3==1.0.5 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:337f45bd080b21ebe6c248f2d6de4339f83f13dc853020cb93c7a3f93a0ea4f7 \
-    --hash=sha256:7bac73f393a67ea6d5ac32e4a45d39c184487c89c712ab3ed839c1a51ed82259 \
-    --hash=sha256:b374d32d3d169590d7fe6832429f78be4f3837e5d743f1353d71bd11e77f0d3b \
-    --hash=sha256:bc2d2c8c74d0d681309fcb2e61b2db04db5261333c8608fa84a4ba4c493d68ad \
-    --hash=sha256:ddf4cefe9bca6a60dc967c1e59671bba78211b75568417a00bdfcd7a0ebf304b \
-    --hash=sha256:e9dfcc3ecf191a14f983d64cfcc7c68af99b74e3728f75bc99677d7ef824d170
+blake3==1.0.6 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:37a786a9aa26f6a68df6a2bdd51ebb3d7338681cde607ec9b9889c546261f6d6 \
+    --hash=sha256:6bf88dfd8113452d58468229ffbd7e55423cbd658b99848ed64dbbc05ca614e0 \
+    --hash=sha256:9d7395b85d1c9c3cd526b053cf68c371a3e6c8f0e61c4845e968a3cfa3d78171 \
+    --hash=sha256:c565cee6aaf74dad8b17d0a7f78025a4f3b3b2459929ae92505b3c95e80d5e2f \
+    --hash=sha256:d700771c28e9d83ad985a9119c71da4f1522c4d078ac37f9cde7248c33059872 \
+    --hash=sha256:e5a306e643a01755069fe70a2341ca8c8e715810a3517120c6db295c02e6919f
     # via vllm
 cachetools==6.2.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:1c76a8960c0041fcc21097e357f882197c79da0dbff766e7317890a65d7d8ba6 \
@@ -103,9 +103,9 @@ charset-normalizer==3.4.3 ; platform_machine == 'x86_64' and sys_platform == 'li
     --hash=sha256:ce571ab16d890d23b5c278547ba694193a45011ff86a9162a71307ed9f86759a \
     --hash=sha256:d0e909868420b7049dafd3a31d45125b31143eec59235311fc4c57ea26a4acd2
     # via requests
-click==8.2.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:27c491cc05d968d271d5a1db13e3b5a184636d9d930f148c50b038f0d0646202 \
-    --hash=sha256:61a3265b914e850b85317d0b3109c7f8cd35a670f963866005d6ef1d5175a12b
+click==8.3.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:9b9f285302c6e3064f4330c05f05b81945b2a39544279343e6e7c5f27a9baddc \
+    --hash=sha256:e7b8232224eba16f4ebe410c25ced9f7875cb5f3263ffc93cc3e8da705e229c4
     # via
     #   ray
     #   rich-toolkit
@@ -154,10 +154,6 @@ dnspython==2.8.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af \
     --hash=sha256:181d3c6996452cb1189c4046c61599b84a5a86e099562ffde77d26984ff26d0f
     # via email-validator
-docker-pycreds==0.4.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:6ce3270bcaf404cc4c3e27e4b6c70d3521deae82fb508767870fdbf772d584d4 \
-    --hash=sha256:7266112468627868005106ec19cd0d722702d2b7d5912a28e19b826c3d37af49
-    # via wandb
 einops==0.8.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:919387eb55330f5757c6bea9165c5ff5cfe63a642682ea788a6d472576d81737 \
     --hash=sha256:de5d960a7a761225532e0f1959e5315ebeafc0cd43394732f103ca44b9837e84
@@ -174,17 +170,17 @@ exceptiongroup==1.3.0 ; platform_machine == 'x86_64' and sys_platform == 'linux'
     # via
     #   anyio
     #   pytest
-fastapi==0.116.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:c46ac7c312df840f0c9e220f7964bada936781bc4e2e6eb71f1c4d7553786565 \
-    --hash=sha256:ed52cbf946abfd70c5a0dccb24673f0670deeb517a88b3544d03c2a6bf283143
+fastapi==0.117.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:33c51a0d21cab2b9722d4e56dbb9316f3687155be6b276191790d8da03507552 \
+    --hash=sha256:fb2d42082d22b185f904ca0ecad2e195b851030bd6c5e4c032d1c981240c631a
     # via vllm
-fastapi-cli==0.0.11 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:4f01d751c14d3d2760339cca0f45e81d816218cae8174d1dc757b5375868cde5 \
-    --hash=sha256:bcdd1123c6077c7466452b9490ca47821f00eb784d58496674793003f9f8e33a
+fastapi-cli==0.0.13 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:219b73ccfde7622559cef1d43197da928516acb4f21f2ec69128c4b90057baba \
+    --hash=sha256:312addf3f57ba7139457cf0d345c03e2170cc5a034057488259c33cd7e494529
     # via fastapi
-fastapi-cloud-cli==0.1.5 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:341ee585eb731a6d3c3656cb91ad38e5f39809bf1a16d41de1333e38635a7937 \
-    --hash=sha256:d80525fb9c0e8af122370891f9fa83cf5d496e4ad47a8dd26c0496a6c85a012a
+fastapi-cloud-cli==0.2.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:245447bfb17b01ae5f7bc15dec0833bce85381ecf34532e8fa4bcf279ad1c361 \
+    --hash=sha256:aa22a4b867bf53165b6551d2f4eb21b079bad4aa74047cb889acf941e34699d9
     # via fastapi-cli
 fastrlock==0.8.3 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:0d6a77b3f396f7d41094ef09606f65ae57feeb713f4285e8e417f4021617ca62 \
@@ -263,9 +259,9 @@ httpx==0.28.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     #   fastapi
     #   fastapi-cloud-cli
     #   openai
-huggingface-hub==0.34.5 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:f676c6db41bc3fbd4020f520c842a0548f4c9a3f698dbfa6514bd8e41c3ab52a \
-    --hash=sha256:fea377adc6e9b6c239c1450e41a1409cbf2c6364d289c04c31d7dbaa222842e3
+huggingface-hub==0.35.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:2f0e2709c711e3040e31d3e0418341f7092910f1462dd00350c4e97af47280a8 \
+    --hash=sha256:3585b88c5169c64b7e4214d0e88163d4a709de6d1a502e0cd0459e9ee2c9c572
     # via
     #   accelerate
     #   datasets
@@ -519,6 +515,7 @@ packaging==25.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     #   pytest
     #   ray
     #   transformers
+    #   wandb
 pandas==2.3.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:21bb612d148bb5860b7eb2c10faacf1a810799245afd342cf297d7551513fbb6 \
     --hash=sha256:ab7b58f8f82706890924ccdfb5f48002b83d2b5a3845976a9fb705d36c34dcdb \
@@ -552,9 +549,9 @@ pluggy==1.6.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
 pre-commit==4.3.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:2b0747ad7e6e967169136edffee14c16e148a778a54e4f967921aa1ebf2308d8 \
     --hash=sha256:499fe450cc9d42e9d58e606262795ecb64dd05438943c62b66f6a8673da30b16
-prometheus-client==0.22.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:190f1331e783cf21eb60bca559354e0a4d4378facecf78f5428c39b675d20d28 \
-    --hash=sha256:cca895342e308174341b2cbf99a56bef291fbc0ef7b9e5412a0f26d653ba7094
+prometheus-client==0.23.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:6ae8f9081eaaaf153a2e959d2e6c4f4fb57b12ef76c8c7980202f1e57b48b2ce \
+    --hash=sha256:dd1913e6e76b59cfe44e7a4b83e01afc9873c1bdfd2ed8739f1e76aeca115f99
     # via
     #   prometheus-fastapi-instrumentator
     #   vllm
@@ -583,13 +580,12 @@ protobuf==5.29.5 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     #   ray
     #   vllm
     #   wandb
-psutil==7.0.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:4b1388a4f6875d7e2aff5c4ca1cc16c545ed41dd8bb596cefea80111db353a34 \
-    --hash=sha256:7be9c3eba38beccb6495ea33afd982a44074b78f28c434a1f51cc07fd315c456
+psutil==7.1.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:655708b3c069387c8b77b072fc429a57d0e214221d01c0a772df7dfedcb3bcd2 \
+    --hash=sha256:8c70e113920d51e89f212dd7be06219a9b88014e63a4cec69b684c327bc474e3
     # via
     #   accelerate
     #   vllm
-    #   wandb
 py-cpuinfo==9.0.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:3cdbbf3fac90dc6f118bfd64384f309edeadd902d7c8fb17f02ffa1fc3f49690 \
     --hash=sha256:859625bc251f64e21f077d099d4162689c762b5d6a4c3c97553d56241c9674d5
@@ -637,6 +633,7 @@ pydantic==2.11.9 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     #   openai
     #   pydantic-extra-types
     #   vllm
+    #   wandb
     #   xgrammar
 pydantic-core==2.33.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:0405262705a123b7ce9f0b92f123334d67b70fd1f20a9372b907ce1080c7ba02 \
@@ -687,11 +684,11 @@ pytz==2025.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:360b9e3dbb49a209c21ad61809c7fb453643e048b38924c765813546746e81c3 \
     --hash=sha256:5ddf76296dd8c44c26eb8f4b6f35488f3ccbf6fbbd7adee0b7262d43f0ec2f00
     # via pandas
-pyyaml==6.0.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:23502f431948090f597378482b4812b0caae32c22213aecf3b55325e049a6c68 \
-    --hash=sha256:7c36280e6fb8385e520936c3cb3b8042851904eba0e58d277dca80a5cfed590b \
-    --hash=sha256:d584d9ec91ad65861cc08d42e834324ef890a082e591037abe114850ff7bbc3e \
-    --hash=sha256:ec031d5d2feb36d1d1a24380e4db6d43695f3748343d99434e6f5f9156aaa2ed
+pyyaml==6.0.3 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:5e0b74767e5f8c593e8c9b5912019159ed0533c70051e9cce3e8b6aa699fcd69 \
+    --hash=sha256:66291b10affd76d76f54fad28e22e51719ef9ba22b29e1d7d03d6777a9174198 \
+    --hash=sha256:9c7708761fccb9397fe64bbc0395abcae8c4bf7b0eac081e12b809bf47700d0b \
+    --hash=sha256:d76623373421df22fb4cf8817020cbb7ef15c725b9d5e45f17e189bfc384190f
     # via
     #   accelerate
     #   datasets
@@ -712,8 +709,8 @@ pyzmq==27.1.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:ac0765e3d44455adb6ddbf4417dcce460fc40a05978c08efdf2948072f6db540 \
     --hash=sha256:f30f395a9e6fbca195400ce833c731e7b64c3919aa481af4d88c3759e0cb7496
     # via vllm
-ray==2.49.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:9384d27059caf86a38cbbcb422ab61b68de87333784bf1b22722d74fdba01ef6
+ray==2.49.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:74566876af7bf4e48ea4b9b3b75b34db053d1064cc4d4b1670dc4ce78f6894af
     # via vllm
 referencing==0.36.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:df2e89862cd09deabbdba16944cc3f10feb6b3e6f18e902f7cc25609a34775aa \
@@ -721,15 +718,15 @@ referencing==0.36.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     # via
     #   jsonschema
     #   jsonschema-specifications
-regex==2025.9.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:113d5aa950f428faf46fd77d452df62ebb4cc6531cb619f6cc30a369d326bfbd \
-    --hash=sha256:1ec2bd3bdf0f73f7e9f48dca550ba7d973692d5e5e9a90ac42cc5f16c4432d8b \
-    --hash=sha256:4bcdff370509164b67a6c8ec23c9fb40797b72a014766fdc159bb809bd74f7d8 \
-    --hash=sha256:5c3b96ed0223b32dbdc53a83149b6de7ca3acd5acd9c8e64b42a166228abe29c \
-    --hash=sha256:67a74456f410fe5e869239ee7a5423510fe5121549af133809d9591a8075893f \
-    --hash=sha256:7383efdf6e8e8c61d85e00cfb2e2e18da1a621b8bfb4b0f1c2747db57b942b8f \
-    --hash=sha256:88ac07b38d20b54d79e704e38aa3bd2c0f8027432164226bdee201a1c0c9c9ff \
-    --hash=sha256:e71bceb3947362ec5eabd2ca0870bb78eae4edfc60c6c21495133c01b6cd2df4
+regex==2025.9.18 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:0cc3521060162d02bd36927e20690129200e5ac9d2c6d32b70368870b122db25 \
+    --hash=sha256:385c9b769655cb65ea40b6eea6ff763cbb6d69b3ffef0b0db8208e1833d4e746 \
+    --hash=sha256:3acc471d1dd7e5ff82e6cacb3b286750decd949ecd4ae258696d04f019817ef8 \
+    --hash=sha256:431bd2a8726b000eb6f12429c9b438a24062a535d06783a93d2bcbad3698f8a8 \
+    --hash=sha256:8900b3208e022570ae34328712bef6696de0804c122933414014bae791437ab2 \
+    --hash=sha256:a021217b01be2d51632ce056d7a837d3fa37c543ede36e39d14063176a26ae29 \
+    --hash=sha256:c204e93bf32cd7a77151d44b05eb36f469d0898e3fba141c026a26b79d9914a0 \
+    --hash=sha256:c5ba23274c61c6fef447ba6a39333297d0c247f53059dba0bca415cac511edc4
     # via
     #   tiktoken
     #   transformers
@@ -820,26 +817,16 @@ sentencepiece==0.2.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' 
     --hash=sha256:27e38eee653abc3d387862e67bc5c8b6f428cd604e688b85d29170b7e725c26c \
     --hash=sha256:8138cec27c2f2282f4a34d9a016e3374cd40e5c6e9cb335063db66a0a3b71fad
     # via vllm
-sentry-sdk==2.38.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:2324aea8573a3fa1576df7fb4d65c4eb8d9929c8fa5939647397a07179eef8d0 \
-    --hash=sha256:792d2af45e167e2f8a3347143f525b9b6bac6f058fb2014720b40b84ccbeb985
+sentry-sdk==2.39.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:8c185854d111f47f329ab6bc35993f28f7a6b7114db64aa426b326998cfa14e9 \
+    --hash=sha256:ba655ca5e57b41569b18e2a5552cb3375209760a5d332cdd87c6c3f28f729602
     # via
     #   fastapi-cloud-cli
     #   wandb
-setproctitle==1.3.7 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:00afa6fc507967d8c9d592a887cdc6c1f5742ceac6a4354d111ca0214847732c \
-    --hash=sha256:502b902a0e4c69031b87870ff4986c290ebbb12d6038a70639f09c331b18efb2 \
-    --hash=sha256:6da835e76ae18574859224a75db6e15c4c2aaa66d300a57efeaa4c97ca4c7381 \
-    --hash=sha256:83fcd271567d133eb9532d3b067c8a75be175b2b3b271e2812921a05303a693f \
-    --hash=sha256:a05509cfb2059e5d2ddff701d38e474169e9ce2a298cf1b6fd5f3a213a553fe5 \
-    --hash=sha256:bc2bc917691c1537d5b9bca1468437176809c7e11e5694ca79a9ca12345dcb9e
-    # via wandb
 setuptools==80.9.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:062d34222ad13e0cc312a4c02d73f059e86a4acbfbdea8f8f76b28c99f306922 \
     --hash=sha256:f36b47402ecde768dbfafc46e8e4207b4360c654f1f3bb84475f0a28628fb19c
-    # via
-    #   triton
-    #   wandb
+    # via triton
 shellingham==1.5.4 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:7ecfff8f2fd72616f7481040475a65b2bf8af90a56c89140852d1120324e8686 \
     --hash=sha256:8dbca0739d487e5bd35ab3ca4b36e11c4078f3a234bfce294b0a0291363404de
@@ -847,9 +834,7 @@ shellingham==1.5.4 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
 six==1.17.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \
     --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81
-    # via
-    #   docker-pycreds
-    #   python-dateutil
+    # via python-dateutil
 smmap==5.0.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:26ea65a03958fa0c8a1c7e8c7a58fdc77221b8910f6be2131affade476898ad5 \
     --hash=sha256:b30115f0def7d7531d22a0fb6502488d879e75b260a9db4d0819cfb25403af5e
@@ -870,9 +855,9 @@ soxr==1.0.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:e07ee6c1d659bc6957034f4800c60cb8b98de798823e34d2a2bba1caa85a4509 \
     --hash=sha256:e8f2a69686f2856d37823bbb7b78c3d44904f311fe70ba49b893af11d6b6047b
     # via mistral-common
-starlette==0.47.3 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:6bc94f839cc176c4858894f1f8908f0ab79dfec1a6b8402f6da9be26ebea52e9 \
-    --hash=sha256:89c0778ca62a76b826101e7c709e70680a1699ca7da6b44d38eb0a7e61fe4b51
+starlette==0.48.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:0764ca97b097582558ecb498132ed0c7d942f233f365b86ba37770e026510659 \
+    --hash=sha256:7e8cee469a8ab2352911528110ce9088fdc6a37d9876926e73da7ce4aa4c7a46
     # via
     #   fastapi
     #   prometheus-fastapi-instrumentator
@@ -949,9 +934,9 @@ triton==3.3.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     # via
     #   torch
     #   xgrammar
-typer==0.17.4 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:015534a6edaa450e7007eba705d5c18c3349dcea50a6ad79a5ed530967575824 \
-    --hash=sha256:b77dc07d849312fd2bb5e7f20a7af8985c7ec360c45b051ed5412f64d8dc1580
+typer==0.19.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:755e7e19670ffad8283db353267cb81ef252f595aa6834a0d1ca9312d9326cb9 \
+    --hash=sha256:9ad824308ded0ad06cc716434705f691d4ee0bfd0fb081839d2e426860e7fdca
     # via
     #   fastapi-cli
     #   fastapi-cloud-cli
@@ -961,6 +946,7 @@ typing-extensions==4.15.0 ; platform_machine == 'x86_64' and sys_platform == 'li
     # via
     #   aiosignal
     #   anyio
+    #   blake3
     #   exceptiongroup
     #   fastapi
     #   huggingface-hub
@@ -995,9 +981,9 @@ urllib3==2.5.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     # via
     #   requests
     #   sentry-sdk
-uvicorn==0.35.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:197535216b25ff9b785e29a0b79199f55222193d47f820816e7da751e9bc8d4a \
-    --hash=sha256:bc662f087f7cf2ce11a1d7fd70b90c9f98ef2e2831556dd078d131b96cc94a01
+uvicorn==0.37.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:4115c8add6d3fd536c8ee77f0e14a7fd2ebba939fed9b02583a97f80648f9e13 \
+    --hash=sha256:913b2b88672343739927ce381ff9e2ad62541f9f8289664fa1d1d3803fa2ce6c
     # via
     #   fastapi
     #   fastapi-cli
@@ -1015,11 +1001,10 @@ vllm==0.10.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:8ca37559d82b43b5e8c8248d2e4a1ecb51d6d4e5d517491d656df6491ed93dab \
     --hash=sha256:a44e9013db26082a82c3931ed8772ac884d6d60566d36ecdb0e8dc01c65b241a
     # via grpo-gsm8k
-wandb==0.18.7 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:00f9891558d4833ee47f21ce6c603499f0bd1a7ce117ff55ee1a041e9094f9a2 \
-    --hash=sha256:7ca272660d880ba007aa7b4be2f88160692b2f12dccd431bd2f6471c85e68986 \
-    --hash=sha256:b3133683a5b3bd3a50cf498e6b5ecc7406738619ae9f245326a9fa2e80ad313f \
-    --hash=sha256:c2b9f9fea6daf8b62a505ea5d77d7e5e375c6014947a8882c0497399a9a1e4af
+wandb==0.22.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:44da9a83301d89c008f608832b74237f9e0a0758b2bb6d69ba51652818fffb5e \
+    --hash=sha256:717e3d085f8f57dbde745c9ec6d605e51b2da51e47a7d2a7bfa82c9c6e3d3f5a \
+    --hash=sha256:884d37fb8d4daeb4d1f68ad8b5ea2817cabecc715efaff2f89bf006f2e977e37
     # via grpo-gsm8k
 watchfiles==1.1.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:199207b2d3eeaeb80ef4411875a6243d9ad8bc35b07fc42daa6b801cc39cc41c \

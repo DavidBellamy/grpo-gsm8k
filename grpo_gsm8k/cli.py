@@ -16,7 +16,7 @@ Subcommands:
     eval    Run evaluation with unified logging and artifact management.
 
 Options:
-    --model_id          Model identifier (default: "Qwen/Qwen2.5-7B-Instruct").
+    --model_id          Model identifier (default: "Qwen/Qwen2.5-Math-1.5B").
     --eval_path         Path to evaluation data (default: "artifacts/gsm8k/val.jsonl").
     --limit             Limit number of evaluation samples.
     --batch_size        Batch size for evaluation (default: 8).
@@ -38,6 +38,7 @@ Artifacts and logs are stored in timestamped run directories under "artifacts/ru
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import subprocess
 from datetime import datetime, timezone
@@ -71,9 +72,36 @@ def _run_dir() -> Path:
     return rd
 
 
+def _setup_logging(run_dir: Path, level: int = logging.INFO) -> Path:
+    """
+    Configure root logging to stream to stderr and write a file under the run directory.
+    Returns the log file path.
+    """
+    log_dir = run_dir / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / "run.log"
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[
+            logging.StreamHandler(),  # VS Code terminal
+            logging.FileHandler(log_path, encoding="utf-8"),
+        ],
+        force=True,  # reconfigure if something set handlers earlier
+    )
+    # Quiet some noisy libraries unless needed
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("wandb").setLevel(logging.INFO)
+    logging.getLogger(__name__).info("Logging initialized -> %s", log_path)
+    return log_path
+
+
 def cmd_eval(args: argparse.Namespace) -> None:
     run_dir = _run_dir()
     print(f"Run dir: {run_dir}")
+    _setup_logging(run_dir)
+    logging.getLogger(__name__).info("Run dir: %s", run_dir)
 
     # 1) System info
     _sh(["bash", "scripts/collect_system_info.sh", str(run_dir)])
@@ -136,6 +164,8 @@ def cmd_eval(args: argparse.Namespace) -> None:
 def cmd_sft(args: argparse.Namespace) -> None:
     run_dir = _run_dir()
     print(f"Run dir: {run_dir}")
+    _setup_logging(run_dir)
+    logging.getLogger(__name__).info("Run dir: %s", run_dir)
 
     # 1) System info
     _sh(["bash", "scripts/collect_system_info.sh", str(run_dir)])
@@ -145,7 +175,7 @@ def cmd_sft(args: argparse.Namespace) -> None:
         str(run_dir / "run_manifest.json"),
         extras={
             "model_id": args.model_id,
-            "data_path": args.data_path,
+            "train_data_path": args.train_data_path,
             "note": "SFT run",
         },
     )
@@ -158,25 +188,25 @@ def cmd_sft(args: argparse.Namespace) -> None:
             k: getattr(args, k)
             for k in [
                 "model_id",
-                "data_path",
+                "train_data_path",
+                "eval_data_path",
                 "microbatch_size",
-                "gradient_accumulation_steps",
+                "max_total_tokens",
+                "min_tokens_per_update",
                 "num_epochs",
-                "max_steps",
+                "max_update_steps",
                 "learning_rate",
                 "adamw_beta1",
                 "adamw_beta2",
                 "adamw_eps",
                 "weight_decay",
-                "max_total_tokens",
-                "log_every",
                 "eval_every",
                 "eval_examples",
                 "vllm_device",
                 "vllm_gpu_memory_util",
+                "checkpoint_dir",
+                "resume_from",
                 "max_grad_norm",
-                "teacher_eval_every",
-                "teacher_eval_examples",
                 "gen_max_new_tokens",
                 "gen_temperature",
                 "gen_top_p",
@@ -208,59 +238,35 @@ def cmd_sft(args: argparse.Namespace) -> None:
         model_dtype = _dtype_map[key]
 
     # 4) Run SFT
-    def _wb_log(step: int, metrics: dict[str, float]) -> None:
-        wandb.log(metrics, step=step)
-
-    def _on_eval(step: int, gen_log: dict[str, Any]) -> None:
-        per = gen_log.get("per_example", [])
-        if not per:
-            return
-        table = wandb.Table(columns=["step", "prompt", "response", "length", "entropy"])
-        limit = min(len(per), getattr(args, "log_examples", 4))
-        for row in per[:limit]:
-            table.add_data(
-                step,
-                row.get("prompt", ""),
-                row.get("response", ""),
-                row.get("length", 0),
-                row.get("mean_token_entropy", 0.0),
-            )
-        wandb.log({"eval/examples": table}, step=step)
-
-    result = train_sft_on_r1_pairs(
-        data_path=args.data_path,
+    train_sft_on_r1_pairs(
+        train_data_path=args.train_data_path,
+        eval_data_path=getattr(args, "eval_data_path", None),
         model_id=args.model_id,
         device=args.device,
+        vllm_device=args.vllm_device,
+        vllm_gpu_memory_utilization=args.vllm_gpu_memory_util,
         microbatch_size=args.microbatch_size,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
         num_epochs=args.num_epochs,
-        max_steps=args.max_steps,
+        min_tokens_per_update=args.min_tokens_per_update,
+        max_update_steps=args.max_update_steps,
         learning_rate=args.learning_rate,
         adamw_beta1=args.adamw_beta1,
         adamw_beta2=args.adamw_beta2,
         adamw_eps=args.adamw_eps,
         weight_decay=args.weight_decay,
         max_total_tokens=args.max_total_tokens,
-        log_every=args.log_every,
         eval_every=args.eval_every,
         eval_examples=args.eval_examples,
-        vllm_device=args.vllm_device,
-        vllm_gpu_memory_utilization=args.vllm_gpu_memory_util,
-        wb_log=_wb_log,
-        checkpoint_dir=args.checkpoint_dir,
-        checkpoint_every=args.checkpoint_every,
-        resume_from=args.resume_from,
-        max_grad_norm=args.max_grad_norm,
-        teacher_eval_every=args.teacher_eval_every,
-        teacher_eval_examples=args.teacher_eval_examples,
         gen_max_new_tokens=args.gen_max_new_tokens,
         gen_temperature=args.gen_temperature,
         gen_top_p=args.gen_top_p,
         model_dtype=model_dtype,
+        checkpoint_dir=args.checkpoint_dir,
+        resume_from=args.resume_from,
+        max_grad_norm=args.max_grad_norm,
     )
 
-    # 5) Final metrics
-    wandb.log(result)
+    # 5) Finish W&B
     wandb.finish()
 
     # 6) Lock/export environment
@@ -285,7 +291,7 @@ def main() -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     e = sub.add_parser("eval", help="Run evaluation with unified logging & artifacts")
-    e.add_argument("--model_id", default="Qwen/Qwen2.5-7B-Instruct")
+    e.add_argument("--model_id", default="Qwen/Qwen2.5-Math-1.5B")
     e.add_argument("--eval_path", default="artifacts/gsm8k/val.jsonl")
     e.add_argument("--limit", type=int, default=None)
     e.add_argument("--batch_size", type=int, default=8)
@@ -303,105 +309,53 @@ def main() -> None:
     e.set_defaults(func=cmd_eval)
 
     s = sub.add_parser("sft", help="Run SFT on R1 traces with W&B logging")
-    s.add_argument("--data_path", default="artifacts/r1_sft_pairs.jsonl")
+    s.add_argument("--train_data_path", default="artifacts/tokenized/*.pt")
+    s.add_argument(
+        "--eval_data_path",
+        default="artifacts/tokenized/val_for_vllm.jsonl",
+        help="Path to pre-rendered eval set (JSONL)",
+    )
     s.add_argument("--model_id", default="Qwen/Qwen2.5-Math-1.5B")
     s.add_argument("--device", default="cuda:0")
+    s.add_argument("--vllm_device", default="cuda:1")
+    s.add_argument("--vllm_gpu_memory_util", type=float, default=0.85)
     s.add_argument("--microbatch_size", type=int, default=2)
-    s.add_argument("--gradient_accumulation_steps", type=int, default=8)
     s.add_argument("--num_epochs", type=int, default=1)
-    s.add_argument("--max_steps", type=int, default=None)
+    s.add_argument("--min_tokens_per_update", type=int, default=4096)
+    s.add_argument("--max_update_steps", type=int, default=None)
     s.add_argument("--learning_rate", type=float, default=1e-5)
     s.add_argument("--adamw_beta1", type=float, default=0.9)
     s.add_argument("--adamw_beta2", type=float, default=0.95)
     s.add_argument("--adamw_eps", type=float, default=1e-8)
     s.add_argument("--weight_decay", type=float, default=0.0)
+    s.add_argument("--max_grad_norm", type=float, default=1.0)
     s.add_argument("--max_total_tokens", type=int, default=2048)
-    s.add_argument("--log_every", type=int, default=10)
-    s.add_argument("--eval_every", type=int, default=200)
-    s.add_argument("--eval_examples", type=int, default=4)
-    s.add_argument(
-        "--max_grad_norm",
-        type=float,
-        default=1.0,
-        help="Clip gradient norm to this value (>0). Set <=0 to disable.",
-    )
-    s.add_argument(
-        "--teacher_eval_every",
-        type=int,
-        default=None,
-        help="Frequency (steps) of teacher-forced eval on training GPU (defaults to --eval_every).",
-    )
-    s.add_argument(
-        "--teacher_eval_examples",
-        type=int,
-        default=4,
-        help="Number of examples for teacher-forced eval.",
-    )
-    s.add_argument(
-        "--gen_max_new_tokens",
-        type=int,
-        default=128,
-        help="Max new tokens for async vLLM generation.",
-    )
-    s.add_argument(
-        "--gen_temperature",
-        type=float,
-        default=0.0,
-        help="Temperature for async vLLM generation.",
-    )
-    s.add_argument(
-        "--gen_top_p",
-        type=float,
-        default=1.0,
-        help="Top-p for async vLLM generation.",
-    )
-    s.add_argument(
-        "--vllm_device",
-        default="cuda:1",
-        help="Device for the persistent vLLM generation worker (set to None to disable).",
-    )
-    s.add_argument(
-        "--vllm_gpu_memory_util",
-        type=float,
-        default=0.85,
-        help="GPU memory utilization fraction for vLLM worker.",
-    )
+    s.add_argument("--eval_every", type=int, default=4)
+    s.add_argument("--eval_examples", type=int, default=None)
+    s.add_argument("--gen_max_new_tokens", type=int, default=2048)
+    s.add_argument("--gen_temperature", type=float, default=0.0)
+    s.add_argument("--gen_top_p", type=float, default=1.0)
     s.add_argument(
         "--model_dtype",
         default=None,
         help="Optional dtype override: bfloat16|float16|float32 (auto if omitted).",
     )
-    # W&B
-    s.add_argument("--wandb_project", default="grpo-gsm8k")
-    s.add_argument("--wandb_entity", default=None)
-    s.add_argument("--run_name", default=None)
     s.add_argument(
-        "--wandb_mode",
-        default=None,
-        help="online|offline|disabled (sets WANDB_MODE)",
-    )
-    # Checkpoints and example logging
-    s.add_argument(
-        "--checkpoint_dir",
-        default=None,
-        help="Directory to save model/tokenizer checkpoints",
-    )
-    s.add_argument(
-        "--checkpoint_every",
-        type=int,
-        default=None,
-        help="Save a checkpoint every N steps",
-    )
-    s.add_argument(
-        "--log_examples",
-        type=int,
-        default=4,
-        help="Max number of eval examples to log to W&B per eval",
+        "--checkpoint_dir", default=None, help="Directory to save model/tokenizer checkpoints"
     )
     s.add_argument(
         "--resume_from",
         default=None,
         help="Checkpoint directory or a root containing step_* subdirs to resume from",
+    )
+    # W&B
+    s.add_argument("--wandb_project", default="grpo-gsm8k")
+    s.add_argument("--wandb_entity", default=None)
+    s.add_argument("--run_name", default=None, help="Optional run name for W&B logging")
+    s.add_argument(
+        "--wandb_mode",
+        default=None,
+        help="online|offline|disabled (sets WANDB_MODE)",
     )
     s.set_defaults(func=cmd_sft)
 

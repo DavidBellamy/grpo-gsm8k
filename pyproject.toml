@@ -24,7 +24,7 @@ dependencies = [
   "datasets>=2.20,<2.21",
   "accelerate>=0.34.1,<1.0",
   "numpy>=2,<3",
-  "wandb>=0.17,<0.19",
+  "wandb>=0.20.0",
 ]
 
 [tool.uv]
