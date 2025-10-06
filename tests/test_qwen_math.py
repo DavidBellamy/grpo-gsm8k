@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-if TYPE_CHECKING:  # pragma: no cover
+if TYPE_CHECKING:
     pass
 
 MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"

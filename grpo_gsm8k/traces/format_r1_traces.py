@@ -11,7 +11,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-# Patterns to drop model-internal meta / instruction echoes
+# Patterns to drop R1's internal meta / instruction echoes
 META = re.compile(
     r"("
     r"I (?:should|will) output.*(?:ANSWER|\\boxed)\s*:?.*|"
@@ -48,6 +48,13 @@ META = re.compile(
 ANSWER_LINE = re.compile(r"^\s*ANSWER:\s*[-+]?\d+(?:\.\d+)?\s*$", re.I | re.M)
 BOXED_ANY = re.compile(r"\\boxed\{[^}]+\}")
 NUM_ANY = re.compile(r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+
+
+@dataclass
+class Stats:
+    processed: int = 0
+    written: int = 0
+    skipped: int = 0
 
 
 def collapse_blank_lines(lines: list[str]) -> list[str]:
@@ -112,13 +119,6 @@ def build_response(
     return f"{body}\n\n\\boxed{{{num}}}"
 
 
-@dataclass
-class Stats:
-    processed: int = 0
-    written: int = 0
-    skipped: int = 0
-
-
 def format_r1_traces(
     infile: Path, outfile: Path, *, limit: int | None = None, encoding: str = "utf-8"
 ) -> Stats:
@@ -152,12 +152,6 @@ def format_r1_traces(
             w.write(json.dumps(rec, ensure_ascii=False) + "\n")
             stats.written += 1
 
-    logger.info(
-        "formatted R1 traces: processed=%d written=%d skipped=%d",
-        stats.processed,
-        stats.written,
-        stats.skipped,
-    )
     return stats
 
 
@@ -174,9 +168,15 @@ def main() -> None:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    _stats = format_r1_traces(args.infile, args.outfile, limit=args.limit)
+    stats = format_r1_traces(args.infile, args.outfile, limit=args.limit)
+    logger.info(
+        "formatted R1 traces: processed=%d written=%d skipped=%d",
+        stats.processed,
+        stats.written,
+        stats.skipped,
+    )
     logger.info("wrote %s", args.outfile)
 
 
-if __name__ == "__main__":  # pragma: no cover
+if __name__ == "__main__":
     main()

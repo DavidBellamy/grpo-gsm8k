@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from grpo_gsm8k.masked_normalize import masked_normalize
+from grpo_gsm8k.core.masked_normalize import masked_normalize
 
 
 def test_masked_normalize_global_sum_scalar() -> None:

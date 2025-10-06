@@ -6,7 +6,7 @@ from typing import Any
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizer
 
-from grpo_gsm8k.per_token_entropy import compute_entropy
+from grpo_gsm8k.core.per_token_entropy import compute_entropy
 
 RewardFn = Callable[[str | None], dict[str, Any]]
 

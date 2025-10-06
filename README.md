@@ -76,7 +76,7 @@ Before SFT, pre-tokenize the prompt/response pairs from `artifacts/r1_sft_pairs.
 - Tokenize to `.pt` shards (N, T) with `input_ids`, `labels`, `response_mask`, plus `pad_token_id` and `meta`:
 
 ```bash
-uv run python scripts/pretokenize_r1_pairs.py \
+uv run python scripts/shell/pretokenize_r1_pairs.py \
   --model_id "Qwen/Qwen2.5-Math-1.5B" \
   --infile artifacts/r1_sft_pairs.jsonl \
   --out_dir artifacts/tokenized \
@@ -97,7 +97,7 @@ To evaluate Qwen checkpoints during SFT, you must pre-render the GSM8K validatio
 - Prepare the eval set:
 
 ```bash
-uv run python scripts/prep_val_for_vllm.py \
+uv run python scripts/shell/prep_val_for_vllm.py \
   --model_id "Qwen/Qwen2.5-Math-1.5B" \
   --infile artifacts/gsm8k/val.jsonl \
   --outfile artifacts/tokenized/val_for_vllm.jsonl

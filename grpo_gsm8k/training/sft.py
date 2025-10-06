@@ -27,10 +27,10 @@ from transformers import (
 )
 from vllm import LLM, SamplingParams
 
-from grpo_gsm8k.data_loader import BucketMicrobatcher, PTShardStream
-from grpo_gsm8k.masked_normalize import masked_normalize
-from grpo_gsm8k.per_token_entropy import compute_entropy
-from grpo_gsm8k.reward_fn import extract_answer_colon, extract_boxed, normalize_number
+from grpo_gsm8k.core.masked_normalize import masked_normalize
+from grpo_gsm8k.core.per_token_entropy import compute_entropy
+from grpo_gsm8k.data.data_loader import BucketMicrobatcher, PTShardStream
+from grpo_gsm8k.evaluation.reward_fn import extract_answer_colon, extract_boxed, normalize_number
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,6 @@ logger = logging.getLogger(__name__)
 def sft_microbatch_train_step(
     policy_log_probs: torch.Tensor,
     response_mask: torch.Tensor,
-    normalize_constant: float = 1.0,
 ) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
     if policy_log_probs.shape != response_mask.shape:
         raise ValueError(
@@ -51,10 +50,8 @@ def sft_microbatch_train_step(
             f"policy_log_probs shape {policy_log_probs.shape}"
         )
 
-    # NLL as masked sum when normalize_constant=1.0 (loss-bearing token summation)
-    nll: torch.Tensor = -masked_normalize(
-        policy_log_probs, response_mask, normalize_constant, dim=None
-    )
+    # NLL as masked sum (loss-bearing token summation)
+    nll: torch.Tensor = -masked_normalize(policy_log_probs, response_mask)
     loss: torch.Tensor = nll
     loss.backward()
 
@@ -69,8 +66,8 @@ def sft_microbatch_train_step(
         "nll_unscaled": nll.detach(),
         "loss": loss.detach(),
         "token_count": token_count,
-        "mean_log_prob_response": mean_log_prob,
-        "mean_nll_response": mean_nll,
+        "avg_response_token_logprob": mean_log_prob,
+        "avg_response_token_nll": mean_nll,
     }
     return loss, metadata
 
@@ -859,7 +856,6 @@ def train_sft_on_r1_pairs(
             _, meta = sft_microbatch_train_step(
                 policy_log_probs=policy_log_probs,
                 response_mask=response_mask,
-                normalize_constant=1.0,
             )
 
             # Running aggregates
@@ -1029,8 +1025,8 @@ def train_sft_on_r1_pairs(
                         "train/pct_pad_per_macrobatch": float(pct_pad_per_macrobatch),
                         "train/tokens_per_sec_response": float(tps_response),
                         "train/tokens_per_sec_nonpad": float(tps_nonpad),
-                        "train/mean_log_prob_response": float(avg_lp_update),
-                        "train/mean_nll_response": float(avg_nll_update),
+                        "train/avg_response_token_logprob": float(avg_lp_update),
+                        "train/avg_response_token_nll": float(avg_nll_update),
                         "train/mean_entropy_response": float(mean_resp_entropy_update),
                         "train/mean_perplexity_response": float(mean_ppl_update),
                         "train/response_tokens_update": float(tokens_since_update),

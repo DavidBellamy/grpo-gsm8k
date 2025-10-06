@@ -8,7 +8,7 @@ import pytest
 import torch
 from safetensors.torch import load_file
 
-import grpo_gsm8k.sft as sft
+import grpo_gsm8k.training.sft as sft
 
 
 class FakeConfig:
@@ -25,33 +25,31 @@ def test_sft_microbatch_train_step_basic() -> None:
         [[-0.1, -0.2, -1.5], [-0.3, -0.4, -0.5]], dtype=torch.float32, requires_grad=True
     )
     mask = torch.tensor([[0, 1, 1], [0, 1, 1]], dtype=torch.long)
-    grad_acc = 2
-    normalize_constant = float(mask.sum().item())  # average per response token
 
-    loss, meta = sft.sft_microbatch_train_step(
-        policy_log_probs=logp,
-        response_mask=mask,
-        normalize_constant=normalize_constant,
-    )
+    loss, meta = sft.sft_microbatch_train_step(policy_log_probs=logp, response_mask=mask)
+
+    # Expected loss = - sum (logp on response tokens)
+    expected_loss = -(-0.2 - 1.5 - 0.4 - 0.5)
+
     # Expected NLL = -mean(logp on response tokens)
-    expected_mean_lp = (-0.2 - 1.5 - 0.4 - 0.5) / 4.0
-    expected_nll = -expected_mean_lp
-    expected_loss = expected_nll / grad_acc
+    expected_nll = -(-0.2 - 1.5 - 0.4 - 0.5) / 4.0
+
+    # Expected per-token log prob
+    expected_pertoken_logp = (-0.2 - 1.5 - 0.4 - 0.5) / 4.0
 
     assert torch.is_tensor(loss) and loss.ndim == 0
     assert pytest.approx(loss.item(), rel=1e-5) == expected_loss
-    assert pytest.approx(meta["mean_log_prob_response"].item(), rel=1e-5) == -expected_nll
-    assert pytest.approx(meta["mean_nll_response"].item(), rel=1e-5) == expected_nll
+    assert (
+        pytest.approx(meta["avg_response_token_logprob"].item(), rel=1e-5) == expected_pertoken_logp
+    )
+    assert pytest.approx(meta["avg_response_token_nll"].item(), rel=1e-5) == expected_nll
 
 
-def test_sft_microbatch_train_step_shape_and_args_errors() -> None:
+def test_sft_microbatch_train_step_shape_errors() -> None:
     logp = torch.zeros(2, 3)
     mask = torch.zeros(2, 2, dtype=torch.long)
     with pytest.raises(ValueError):
         sft.sft_microbatch_train_step(logp, mask)
-
-    with pytest.raises(ValueError):
-        sft.sft_microbatch_train_step(torch.zeros(2, 2), torch.zeros(2, 2), 0.0)
 
 
 def test_ensure_pad_token_sets_from_eos() -> None:
@@ -104,11 +102,27 @@ def test_ensure_pad_token_adds_new_when_no_eos() -> None:
 def test_resolve_resume_path_picks_latest_step(tmp_path: Path) -> None:
     root = tmp_path / "ckpts"
     (root / "step_2").mkdir(parents=True)
-    (root / "step_10").mkdir(parents=True)
+    step_10 = root / "step_10"
+    step_10.mkdir(parents=True)
     (root / "misc").mkdir(parents=True)
+
+    # Add required files to make step_10 a valid checkpoint
+    (step_10 / "config.json").write_text("{}", encoding="utf-8")
+    (step_10 / "pytorch_model.safetensors").write_text("", encoding="utf-8")
 
     resolved = sft._resolve_resume_path(root)
     assert resolved.name == "step_10"
+
+
+def test_resolve_resume_path_fallback_to_root(tmp_path: Path) -> None:
+    root = tmp_path / "ckpts"
+    (root / "step_2").mkdir(parents=True)
+    (root / "step_10").mkdir(parents=True)
+    (root / "misc").mkdir(parents=True)
+    # No config.json or safetensors files in any directory
+
+    resolved = sft._resolve_resume_path(root)
+    assert resolved.name == "ckpts"  # Falls back to root
 
 
 def test_save_policy_checkpoint_for_vllm(tmp_path: Path) -> None:

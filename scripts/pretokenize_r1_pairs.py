@@ -9,8 +9,8 @@ from typing import Any
 import torch
 from transformers import AutoTokenizer
 
-from grpo_gsm8k.prompts import render_batch
-from grpo_gsm8k.tokenize import tokenize_prompt_and_output
+from grpo_gsm8k.core.tokenize import tokenize_prompt_and_output
+from grpo_gsm8k.data.prompts import render_batch
 
 
 def load_jsonl_pairs(path: Path) -> list[dict[str, str]]:

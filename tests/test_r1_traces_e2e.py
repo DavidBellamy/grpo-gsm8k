@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from grpo_gsm8k import r1_traces as mod
+from grpo_gsm8k.traces import r1_traces as mod
 
 pytestmark = pytest.mark.asyncio
 

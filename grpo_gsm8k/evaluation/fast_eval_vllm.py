@@ -5,11 +5,11 @@ from pathlib import Path
 
 import wandb
 from transformers import AutoTokenizer
-from vllm import LLM
+from vllm import LLM, SamplingParams
 
-from grpo_gsm8k.prompts import render_batch
-from grpo_gsm8k.repro import SEED, seed_everything, vllm_sampling_params, wandb_run_init
-from grpo_gsm8k.reward_fn import reward_from_text
+from grpo_gsm8k.data.prompts import render_batch
+from grpo_gsm8k.evaluation.reward_fn import reward_from_text
+from grpo_gsm8k.utils.repro import SEED, seed_everything
 
 
 def load_jsonl(p: str) -> list[dict]:
@@ -17,7 +17,7 @@ def load_jsonl(p: str) -> list[dict]:
 
 
 def main(
-    model_id: str = "Qwen/Qwen2.5-7B-Instruct",
+    model_id: str = "Qwen/Qwen2.5-Math-1.5B",
     eval_path: str = "artifacts/gsm8k/val.jsonl",
     limit: int | None = None,
     max_new_tokens: int = 1024,
@@ -27,7 +27,9 @@ def main(
     run_name: str | None = None,
 ) -> None:
     seed_everything(SEED, deterministic=False)
-    run = wandb_run_init(wandb_project, run_name, dict(model_id=model_id, tp_size=tp_size))
+    run = wandb.init(
+        project=wandb_project, name=run_name, config=dict(model_id=model_id, tp_size=tp_size)
+    )
     assert run is not None, "wandb_run_init returned None (W&B disabled?)"
 
     tok = AutoTokenizer.from_pretrained(model_id, use_fast=True)
@@ -53,8 +55,13 @@ def main(
         tensor_parallel_size=tp_size,
     )
 
-    # Deterministic greedy: temp=0, top_p=1. Don’t rely on defaults.
-    sp = vllm_sampling_params(max_tokens=max_new_tokens, seed=SEED)
+    # Deterministic greedy: temp=0, top_p=1
+    sp = SamplingParams(
+        temperature=0.0,
+        top_p=1.0,
+        max_tokens=max_new_tokens,
+        seed=SEED,
+    )
 
     outputs = llm.generate(prompts, sp, use_tqdm=True)
     texts = [o.outputs[0].text for o in outputs]

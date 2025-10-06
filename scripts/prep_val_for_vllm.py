@@ -6,8 +6,8 @@ from pathlib import Path
 
 from transformers import AutoTokenizer
 
-from grpo_gsm8k.prompts import render_batch
-from grpo_gsm8k.reward_fn import normalize_number
+from grpo_gsm8k.data.prompts import render_batch
+from grpo_gsm8k.evaluation.reward_fn import normalize_number
 
 
 def load_val_rows(path: Path) -> list[dict[str, str]]:

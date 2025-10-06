@@ -1,7 +1,7 @@
 import torch
 from transformers import PreTrainedModel
 
-from grpo_gsm8k.per_token_entropy import compute_entropy
+from grpo_gsm8k.core.per_token_entropy import compute_entropy
 
 
 def get_response_log_probs(

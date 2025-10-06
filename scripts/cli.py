@@ -48,10 +48,10 @@ from typing import Any
 import torch
 import wandb
 
-from grpo_gsm8k import data_prep
-from grpo_gsm8k.fast_eval_vllm import main as vllm_eval_main
-from grpo_gsm8k.repro import write_run_manifest
-from grpo_gsm8k.sft import train_sft_on_r1_pairs
+from grpo_gsm8k.data import data_prep
+from grpo_gsm8k.evaluation.fast_eval_vllm import main as vllm_eval_main
+from grpo_gsm8k.training.sft import train_sft_on_r1_pairs
+from grpo_gsm8k.utils.repro import write_run_manifest
 
 
 def _sh(cmd: list[str], **kw: Any) -> None:
@@ -104,7 +104,7 @@ def cmd_eval(args: argparse.Namespace) -> None:
     logging.getLogger(__name__).info("Run dir: %s", run_dir)
 
     # 1) System info
-    _sh(["bash", "scripts/collect_system_info.sh", str(run_dir)])
+    _sh(["bash", "scripts/shell/collect_system_info.sh", str(run_dir)])
 
     # 2) Data prep (pins revision; also writes JSONL + optional HF snapshot)
     data_prep.main(
@@ -156,7 +156,7 @@ def cmd_eval(args: argparse.Namespace) -> None:
     # 6) Snapshot any external data directory for provenance
     data_dir = os.environ.get("DATA_DIR", None)
     if data_dir is not None and os.path.exists(data_dir):
-        _sh(["bash", "scripts/snapshot_dataset.sh", data_dir, str(run_dir)])
+        _sh(["bash", "scripts/shell/snapshot_dataset.sh", data_dir, str(run_dir)])
     else:
         print("DATA_DIR not set or does not exist; skipping dataset snapshot")
 
@@ -168,7 +168,7 @@ def cmd_sft(args: argparse.Namespace) -> None:
     logging.getLogger(__name__).info("Run dir: %s", run_dir)
 
     # 1) System info
-    _sh(["bash", "scripts/collect_system_info.sh", str(run_dir)])
+    _sh(["bash", "scripts/shell/collect_system_info.sh", str(run_dir)])
 
     # 2) Manifest
     write_run_manifest(

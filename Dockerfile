@@ -23,7 +23,9 @@ ENV TZ=UTC \
   PYTHONUNBUFFERED=1 \
   # toolchain hint for Triton/vLLM
   CC=gcc \
-  CXX=g++
+  CXX=g++ \
+  LANG=C.UTF-8 \
+  LC_CTYPE=C.UTF-8
 
 # ---- Install uv (fast package manager) ----
 # Official guidance: copy the uv binary from the uv image
@@ -63,8 +65,8 @@ RUN set -eux; \
 
 # ---- Place helpers (no source code baked) ----
 WORKDIR /workspace
-COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY scripts/env.det.sh /etc/profile.d/env.det.sh
+COPY scripts/shell/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY scripts/shell/env.det.sh /etc/profile.d/env.det.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /etc/profile.d/env.det.sh
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

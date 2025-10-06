@@ -1,6 +1,6 @@
 import torch
 
-from grpo_gsm8k.per_token_entropy import compute_entropy
+from grpo_gsm8k.core.per_token_entropy import compute_entropy
 
 
 def test_entropy_uniform_logits() -> None:
