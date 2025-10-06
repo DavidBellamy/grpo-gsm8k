@@ -107,6 +107,7 @@ click==8.3.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:9b9f285302c6e3064f4330c05f05b81945b2a39544279343e6e7c5f27a9baddc \
     --hash=sha256:e7b8232224eba16f4ebe410c25ced9f7875cb5f3263ffc93cc3e8da705e229c4
     # via
+    #   flashinfer-python
     #   ray
     #   rich-toolkit
     #   typer
@@ -157,7 +158,9 @@ dnspython==2.8.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
 einops==0.8.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:919387eb55330f5757c6bea9165c5ff5cfe63a642682ea788a6d472576d81737 \
     --hash=sha256:de5d960a7a761225532e0f1959e5315ebeafc0cd43394732f103ca44b9837e84
-    # via vllm
+    # via
+    #   flashinfer-python
+    #   vllm
 email-validator==2.3.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:80f13f623413e6b197ae73bb10bf4eb0908faf509ad8362c5edeb0be7fd450b4 \
     --hash=sha256:9fc05c37f2f6cf439ff414f8fc46d917929974a82244c20eb10231ba60c54426
@@ -199,6 +202,9 @@ filelock==3.19.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     #   transformers
     #   virtualenv
     #   vllm
+flashinfer-python==0.3.1.post1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:d32218c7e33bcbf907719d3e51ddbea84d94a87fd0425378d70bcd28728f342e
+    # via grpo-gsm8k
 frozenlist==1.7.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:15900082e886edb37480335d9d518cec978afc69ccbc30bd18610b7c1b22a718 \
     --hash=sha256:1ed8d2fa095aae4bdc7fdd80351009a48d286635edffee66bf865e37a9125c50 \
@@ -407,6 +413,7 @@ ninja==1.13.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:e8bad11f8a00b64137e9b315b137d8bb6cbf3086fbdc43bf1f90fd33324d2e96 \
     --hash=sha256:fb46acf6b93b8dd0322adc3a4945452a4e774b75b91293bafcc7b7f8e6517dfa
     # via
+    #   flashinfer-python
     #   vllm
     #   xgrammar
 nodeenv==1.9.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
@@ -426,6 +433,7 @@ numpy==2.2.6 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     #   accelerate
     #   cupy-cuda12x
     #   datasets
+    #   flashinfer-python
     #   gguf
     #   grpo-gsm8k
     #   mistral-common
@@ -457,6 +465,9 @@ nvidia-cuda-runtime-cu12==12.8.57 ; platform_machine == 'x86_64' and sys_platfor
 nvidia-cudnn-cu12==9.7.1.26 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:6d011159a158f3cfc47bf851aea79e31bcff60d530b70ef70474c84cac484d07
     # via torch
+nvidia-cudnn-frontend==1.14.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:401df2ccb2d99dce2984c9c7e853a2887eff9c1e7b2ee13e64cc27718335d9b9
+    # via flashinfer-python
 nvidia-cufft-cu12==11.3.3.41 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:da650080ab79fcdf7a4b06aa1b460e99860646b176a43f6208099bdc17836b6a
     # via torch
@@ -477,6 +488,10 @@ nvidia-cusparse-cu12==12.5.7.53 ; platform_machine == 'x86_64' and sys_platform 
 nvidia-cusparselt-cu12==0.6.3 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:e5c8a26c36445dd2e6812f1177978a24e2d37cacce7e090f297a688d1ec44f46
     # via torch
+nvidia-ml-py==13.580.82 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:0c028805dc53a0e2a6985ea801888197765ac2ef8f1c9e29a7bf0d3616a5efc7 \
+    --hash=sha256:4361db337b0c551e2d101936dae2e9a60f957af26818e8c0c3a1f32b8db8d0a7
+    # via pynvml
 nvidia-nccl-cu12==2.26.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:694cf3879a206553cc9d7dbda76b13efaf610fdb70a50cba303de1b0d1530ac6
     # via torch
@@ -510,6 +525,7 @@ packaging==25.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     # via
     #   accelerate
     #   datasets
+    #   flashinfer-python
     #   huggingface-hub
     #   lm-format-enforcer
     #   pytest
@@ -657,6 +673,10 @@ pygments==2.19.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     # via
     #   pytest
     #   rich
+pynvml==13.0.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:1245991d9db786b4d2f277ce66869bd58f38ac654e38c9397d18f243c8f6e48f \
+    --hash=sha256:e2b20e0a501eeec951e2455b7ab444759cf048e0e13a57b08049fa2775266aa8
+    # via flashinfer-python
 pytest==8.4.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:86c0d0b93306b961d58d62a4db4879f27fe25513d4b969df351abdddb3c30e01 \
     --hash=sha256:872f880de3fc3a5bdc88a11b39c9710c3497a547cfa9320bc3c5e62fbf272e79
@@ -736,6 +756,7 @@ requests==2.32.5 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:dbba0bac56e100853db0ea71b82b4dfd5fe2bf6d3754a8893c3af500cec7d7cf
     # via
     #   datasets
+    #   flashinfer-python
     #   huggingface-hub
     #   mistral-common
     #   ray
@@ -865,6 +886,10 @@ sympy==1.14.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:d3d3fe8df1e5a0b42f0e7bdf50541697dbe7d23746e894990c030e2b05e72517 \
     --hash=sha256:e091cc3e99d2141a0ba2847328f5479b05d94a6635cb96148ccb3f34671bd8f5
     # via torch
+tabulate==0.9.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:0095b12bf5966de529c0feb1fa08671671b3368eec77d7ef7ab114be2c068b3c \
+    --hash=sha256:024ca478df22e9340661486f85298cff5f6dcdba14f3813e8830015b9ed1948f
+    # via flashinfer-python
 tiktoken==0.11.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:195d84bec46169af3b1349a1495c151d37a0ff4cba73fd08282736be7f92cc6c \
     --hash=sha256:3c518641aee1c52247c2b97e74d8d07d780092af79d5911a6ab5e79359d9b06a \
@@ -895,6 +920,7 @@ torch==2.7.1+cu128 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     # via
     #   accelerate
     #   compressed-tensors
+    #   flashinfer-python
     #   grpo-gsm8k
     #   torchaudio
     #   torchvision
@@ -916,6 +942,7 @@ tqdm==4.67.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:f8aef9c52c08c13a65f30ea34f4e5aac3fd1a34959879d7e59e63027286627f2
     # via
     #   datasets
+    #   flashinfer-python
     #   gguf
     #   huggingface-hub
     #   openai

@@ -1,5 +1,5 @@
-# H100-friendly, reproducible base (CUDA 12.8 + Ubuntu 22.04)
-FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
+#  Base image = CUDA 12.8 + Ubuntu 22.04
+FROM FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 # YYYYMMDDThhmmssZ from https://snapshot.ubuntu.com/
@@ -16,7 +16,7 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
   apt-get install -y --no-install-recommends \
     build-essential tzdata ca-certificates curl wget unzip git jq bash-completion \
     tmux htop \
-    python3.10 python3.10-venv python3-pip python3.10-dev; \
+    python3.10 python3.10-venv python3-pip python3.10-dev ninja-build; \
   ln -snf /usr/share/zoneinfo/UTC /etc/localtime && echo UTC > /etc/timezone;
 
 ENV TZ=UTC \
@@ -25,7 +25,11 @@ ENV TZ=UTC \
   CC=gcc \
   CXX=g++ \
   LANG=C.UTF-8 \
-  LC_CTYPE=C.UTF-8
+  LC_CTYPE=C.UTF-8 \
+  CUDA_HOME=/usr/local/cuda \
+  PATH=/usr/local/cuda/bin:$PATH \
+  TORCH_CUDA_ARCH_LIST=90a
+
 
 # ---- Install uv (fast package manager) ----
 # Official guidance: copy the uv binary from the uv image
