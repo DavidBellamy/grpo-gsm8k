@@ -9,7 +9,7 @@ from grpo_gsm8k.repro import (
 
 seed_everything(SEED, deterministic=False)  # True => stricter reproducibility (slower)
 write_run_manifest("artifacts/baselines/run_manifest.json", extras={
-    "model_id": "Qwen/Qwen2.5-7B-Instruct",
+    "model_id": "Qwen/Qwen2.5-Math-1.5B",
     "eval_path": "artifacts/gsm8k/val.jsonl",
 })
 """

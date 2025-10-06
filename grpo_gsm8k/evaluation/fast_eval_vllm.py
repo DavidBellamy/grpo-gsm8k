@@ -72,7 +72,7 @@ def main(
 
     Path("artifacts/baselines").mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = Path(f"artifacts/baselines/qwen25_7b_eval_vllm_{ts}.jsonl")
+    out_path = Path(f"artifacts/baselines/qwen25_math_15b_eval_vllm_{ts}.jsonl")
     with out_path.open("w") as f:
         for d, o, r in zip(data, texts, rewards):
             obj = {
@@ -94,7 +94,7 @@ def main(
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
-    p.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-7B-Instruct")
+    p.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Math-1.5B")
     p.add_argument("--eval_path", type=str, default="artifacts/gsm8k/val.jsonl")
     p.add_argument("--limit", type=int, default=None)
     p.add_argument("--max_new_tokens", type=int, default=384)

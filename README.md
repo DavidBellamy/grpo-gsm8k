@@ -174,14 +174,14 @@ On the first pod you deploy, run:
 
 ```bash
 python -m grpo_gsm8k.cli eval \
-  --model_id "Qwen/Qwen2.5-7B-Instruct" \
+  --model_id "Qwen/Qwen2.5-Math-1.5B" \
   --eval_path "artifacts/gsm8k/val.jsonl" \
   --limit 800 \
   --max_new_tokens 384 \
   --gpu_mem_util 0.92 \
   --tp_size 1 \
   --wandb_project "grpo-gsm8k" \
-  --run_name "qwen25_7b_eval" \
+  --run_name "qwen25_math_15b_eval" \
   --out_dir "artifacts/gsm8k" \
   --seed 31415 \
   --eval_n 800 \
@@ -199,7 +199,7 @@ python -m grpo_gsm8k.data_prep
 
 ```bash
 python -m grpo_gsm8k.fast_eval_vllm \
-  --model_id Qwen/Qwen2.5-7B-Instruct \
+  --model_id Qwen/Qwen2.5-Math-1.5B \
   --eval_path artifacts/gsm8k/val.jsonl \
   --limit 200 \
   --max_new_tokens 384 \

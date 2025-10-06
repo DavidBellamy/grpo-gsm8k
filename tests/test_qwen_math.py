@@ -9,7 +9,7 @@ import pytest
 if TYPE_CHECKING:
     pass
 
-MODEL_NAME = "Qwen/Qwen2.5-7B-Instruct"
+MODEL_NAME = "Qwen/Qwen2.5-Math-1.5B"
 
 
 def _extract_boxed_number(text: str) -> float:
