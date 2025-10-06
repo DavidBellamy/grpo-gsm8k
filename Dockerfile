@@ -1,5 +1,5 @@
 #  Base image = CUDA 12.8 + Ubuntu 22.04
-FROM FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
+FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 # YYYYMMDDThhmmssZ from https://snapshot.ubuntu.com/
