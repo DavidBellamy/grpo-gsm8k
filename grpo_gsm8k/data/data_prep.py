@@ -6,7 +6,7 @@ from typing import Any
 
 from datasets import Dataset, DatasetDict, load_dataset
 
-from grpo_gsm8k.repro import SEED, stable_hash
+from grpo_gsm8k.utils.repro import SEED, stable_hash
 
 
 def main(

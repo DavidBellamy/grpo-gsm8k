@@ -4,7 +4,7 @@ import torch
 def masked_normalize(
     tensor: torch.Tensor,
     mask: torch.Tensor,
-    normalize_constant: float,
+    normalize_constant: float = 1,
     dim: int | None = None,
 ) -> torch.Tensor:
     """

@@ -6,7 +6,7 @@ from typing import Any
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizer
 
-from grpo_gsm8k.per_token_entropy import compute_entropy
+from grpo_gsm8k.core.per_token_entropy import compute_entropy
 
 RewardFn = Callable[[str | None], dict[str, Any]]
 
@@ -24,7 +24,7 @@ def log_generations(
     prompts: list[str],
     references: list[str] | None = None,
     *,
-    max_new_tokens: int = 128,
+    max_new_tokens: int = 2048,
     temperature: float = 0.0,
     top_p: float = 1.0,
     reward_fn: RewardFn | None = None,
@@ -97,7 +97,7 @@ def log_generations(
     # out.scores is a list of length T_gen with tensors of shape (B, V).
     if len(out.scores) > 0:
         logits_bt = torch.stack(out.scores, dim=1)  # (B, T_gen, V)
-        ent_bt = compute_entropy(logits_bt)  # (B, T_gen)
+        ent_bt = compute_entropy(logits_bt).to(torch.float32)  # (B, T_gen)
     else:
         ent_bt = torch.zeros((batch_size, 0), dtype=torch.float32, device=device)
 

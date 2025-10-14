@@ -4,7 +4,7 @@ from typing import Any
 import pytest
 import torch
 
-from grpo_gsm8k.log_generations import log_generations
+from grpo_gsm8k.evaluation.log_generations import log_generations
 
 
 class DummyTokenizer:

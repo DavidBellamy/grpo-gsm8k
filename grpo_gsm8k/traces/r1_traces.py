@@ -49,15 +49,11 @@ from typing import Any
 
 import aiohttp
 
-from grpo_gsm8k.reward_fn import (
+from grpo_gsm8k.evaluation.reward_fn import (
     extract_answer_colon,
     normalize_number,
     reward_from_text,
 )
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def load_seen_counts(outfile: Path) -> dict[str, int]:

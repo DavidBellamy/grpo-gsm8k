@@ -1,8 +1,9 @@
 # Simple RL for Math Reasoning
 
-⚠️ This ReadMe is under construction so it might contain some mistakes. More soon!
+⚠️ Under construction. More soon!
 
-This repo contains RL-style fine-tuning & evaluation scaffolding for math reasoning, e.g. GSM8K. It is LoRA-friendly but will also have full fine-tuning code as well. It is meant for models that fit on a single node (i.e. 8 GPUs).
+This project is for SFT, expert iteration, and RL post-training of Qwen models on GSM8k problems. It is designed for single-node jobs.
+
 Includes: **reproducible containers**, **determinism toggles**, **dataset pinning/snapshots**, and a **vLLM baseline eval**.
 
 ---
@@ -36,6 +37,20 @@ This will:
 
 ---
 
+## Generate GSM8k Splits
+
+We reserve 512 problems from the original training set for the validation split.
+
+```python
+python -m grpo_gsm8k.data_prep \
+  --out-dir artifacts/gsm8k \
+  --eval-n 512 \
+  --seed 31415 \
+  --revision main \
+  --cache-dir /workspace/.cache/huggingface \
+  --snapshot-dir artifacts/gsm8k_hf_snapshot
+```
+
 ## Generate DeepSeek R1 Reasoning Traces
 
 We generate DeepSeek R1 reasoning traces for problems in the GSM8k train set via DeepSeek's official API. You need to create an account and get your API key. This command can be run locally:
@@ -53,6 +68,71 @@ uv run --no-project --with aiohttp \
     --offpeak 0.25 \
     --limit 5
 ```
+
+## Pre-tokenize R1 SFT pairs (optional)
+
+Before SFT, pre-tokenize the prompt/response pairs from `artifacts/r1_sft_pairs.jsonl` into fixed-length tensor shards that match the trainer’s expectations in [grpo_gsm8k/sft.py](grpo_gsm8k/sft.py). This uses the same chat rendering and tokenization helpers as training: [`grpo_gsm8k.prompts.render_batch`](grpo_gsm8k/prompts.py) and [`grpo_gsm8k.tokenize.tokenize_prompt_and_output`](grpo_gsm8k/tokenize.py).
+
+- Tokenize to `.pt` shards (N, T) with `input_ids`, `labels`, `response_mask`, plus `pad_token_id` and `meta`:
+
+```bash
+uv run python scripts/shell/pretokenize_r1_pairs.py \
+  --model_id "Qwen/Qwen2.5-Math-1.5B" \
+  --infile artifacts/r1_sft_pairs.jsonl \
+  --out_dir artifacts/tokenized \
+  --max_total_tokens 2048
+```
+
+- Notes:
+  - Left padding; set T to your train `--max_total_tokens` (default 2048).
+  - Build `attention_mask` at load time as `(input_ids != pad_token_id).long()`.
+  - Format aligns with the trainer’s per-step tensors; you can stream microbatches directly to GPU.
+
+---
+
+## Prepare GSM8K validation set for vLLM evaluation (required for SFT)
+
+To evaluate Qwen checkpoints during SFT, you must pre-render the GSM8K validation set questions into Qwen chat prompts and parse the ground truth numeric answers. This is required for async vLLM eval during SFT.
+
+- Prepare the eval set:
+
+```bash
+uv run python scripts/shell/prep_val_for_vllm.py \
+  --model_id "Qwen/Qwen2.5-Math-1.5B" \
+  --infile artifacts/gsm8k/val.jsonl \
+  --outfile artifacts/tokenized/val_for_vllm.jsonl
+```
+
+- The output JSONL contains:
+  - `prompt`: Qwen chat-templated prompt for vLLM generation
+  - `gold`: original ground truth answer string (for logging)
+  - `gold_num`: normalized numeric answer (for exact-match evaluation)
+
+- **Note:** SFT requires this pre-rendered eval set. If not provided, training will halt with an error.
+
+---
+
+## SFT with strict async vLLM evaluation
+
+During SFT, async vLLM evaluation is always enabled and strictly requires a pre-rendered eval set (`artifacts/tokenized/val_for_vllm.jsonl`). No fallback or disabling is allowed.
+
+- Example SFT run:
+
+```bash
+python -m grpo_gsm8k.cli sft \
+  --data_path artifacts/r1_sft_pairs.jsonl \
+  --model_id Qwen/Qwen2.5-Math-1.5B \
+  --vllm_device cuda:1 \
+  --eval_set_path artifacts/tokenized/val_for_vllm.jsonl \
+  --eval_every 4 \
+  --eval_examples 64
+```
+
+- If `--eval_set_path` is missing or invalid, training will halt with an error.
+
+- During evaluation, the trainer:
+  - Uses only the pre-rendered prompts and numeric golds for vLLM generation and exact-match.
+  - Logs the original ground truth answer string alongside Qwen-generated reasoning to W&B.
 
 ---
 
@@ -83,35 +163,25 @@ On the first pod you deploy, run:
 ```
 
 
-4. **Secrets**: store `WANDB_API_KEY` as a secret (don’t expose as plain env var).
-5. **Command**: default `bash` is fine; the image’s `entrypoint.sh` will:
-
-   * load determinism/env shims (`/etc/profile.d/env.det.sh`)
-   * ensure `/workspace` exists
-   * set caches to `/workspace/.cache`
-   * create/activate a persistent venv at `/workspace/.venv` (via `uv`)
-   * (best-effort) start a VS Code tunnel if `VSCODE_TUNNEL_NAME` is set
-
-Then exec into the pod or use the tunnel and run the same command as in **Quickstart**.
-
-> **What’s RunPod-specific here?** Only **how** you attach a network volume at `/workspace` and **where** you set env vars/secrets in the RunPod UI. The env names themselves are generic.
+4. **Secrets**: store `WANDB_API_KEY` as a secret.
+5. **Command**: default `bash` is fine; the image’s `entrypoint.sh` will set up env + venv.
 
 ---
 
 ## Portable usage (works anywhere the image runs)
 
-### One-shot pipeline (sysinfo → data prep → vLLM eval → locks → data snapshot)
+### One-shot pipeline
 
 ```bash
 python -m grpo_gsm8k.cli eval \
-  --model_id "Qwen/Qwen2.5-7B-Instruct" \
+  --model_id "Qwen/Qwen2.5-Math-1.5B" \
   --eval_path "artifacts/gsm8k/val.jsonl" \
   --limit 800 \
   --max_new_tokens 384 \
   --gpu_mem_util 0.92 \
   --tp_size 1 \
   --wandb_project "grpo-gsm8k" \
-  --run_name "qwen25_7b_eval" \
+  --run_name "qwen25_math_15b_eval" \
   --out_dir "artifacts/gsm8k" \
   --seed 31415 \
   --eval_n 800 \
@@ -119,27 +189,17 @@ python -m grpo_gsm8k.cli eval \
   --cache_dir "/workspace/.cache/huggingface"
 ```
 
-### Prepare data only (defaults)
+### Prepare data (defaults)
 
 ```bash
 python -m grpo_gsm8k.data_prep
-```
-
-### Prepare data with custom args
-
-```bash
-python - <<'PY'
-from grpo_gsm8k.data_prep import main
-main(out_dir="artifacts/gsm8k", seed=31415, eval_n=800, revision="main",
-     cache_dir="/workspace/.cache/huggingface")
-PY
 ```
 
 ### vLLM eval only
 
 ```bash
 python -m grpo_gsm8k.fast_eval_vllm \
-  --model_id Qwen/Qwen2.5-7B-Instruct \
+  --model_id Qwen/Qwen2.5-Math-1.5B \
   --eval_path artifacts/gsm8k/val.jsonl \
   --limit 200 \
   --max_new_tokens 384 \
@@ -148,77 +208,71 @@ python -m grpo_gsm8k.fast_eval_vllm \
 
 ---
 
-## Developer setup (only if you’re modifying the image or code)
+## Developer setup (editable install + tests)
 
-These steps are for contributors. End users can stick to the **Quickstart**.
-
-The stack: this repo uses `uv` for Python packages, `ruff` for linting/formatting, `mypy` for type checking, `docker` for building container images, `wandb` for logging experiments, `pytest` for tests, and is designed to run on Ubuntu 22.04 ("Jammy") with CUDA 12.8 with Python 3.10, PyTorch 2.7 and vLLM 0.10.
-
-### Local tooling
+From project root:
 
 ```bash
-# macOS (example)
-brew install docker uv python@3.10
-
-# clone
-git clone https://github.com/DavidBellamy/grpo-gsm8k.git
-cd grpo-gsm8k
-
-# pre-commit hooks (optional but recommended)
-uv tool install pre-commit
-uv tool run pre-commit install
-uv tool run pre-commit run --all-files
-
-# lockfile for reproducible Python deps
-uv lock --python 3.10
+# Runtime deps only
+uv sync
+# Add dev tools (pytest, ruff, mypy, pre-commit)
+uv sync --dev
+uv pip install -e .
+# Run full test suite
+pytest
+# Or quiet
+pytest -q
 ```
 
-### Build the image (optional)
++ To include slow tests (those marked with @pytest.mark.slow), run:
++
++ ```bash
++ pytest --runslow
++ ```
++
++ To run only the slow tests:
++ ```bash
++ pytest -m slow --runslow
++ ```
 
-Note: it is much quicker to build the image and push it to GHCR on a GitHub runner via GitHub Actions.
+Alternative one-shot (no editable install, just add src on path):
 
 ```bash
-# Generic build (host arch)
-docker build -t grpo-gsm8k .
-
-# Cross-build for linux/amd64 (useful on Apple Silicon when targeting x86_64 GPU hosts)
-docker buildx build --platform=linux/amd64 -t grpo-gsm8k .
+PYTHONPATH=. uv run python -m pytest -q
 ```
 
-### Publish to GHCR (optional)
+Lint / format / type-check:
 
 ```bash
-# login (requires PAT with write:packages)
-echo <YOUR_GITHUB_PAT> | docker login ghcr.io -u <GITHUB_USERNAME> --password-stdin
-
-# tag & push
-docker tag grpo-gsm8k:latest ghcr.io/<GITHUB_USERNAME>/grpo-gsm8k:latest
-docker push ghcr.io/<GITHUB_USERNAME>/grpo-gsm8k:latest
-
-# alt: build & push in one step
-# docker buildx build --platform=linux/amd64 \
-#   -t ghcr.io/<GITHUB_USERNAME>/grpo-gsm8k:latest \
-#   --push .
+ruff check .
+ruff format .
+mypy grpo_gsm8k
 ```
+
+---
+
+## Developer tooling & tests (summary)
+
+| Task | Command |
+|------|---------|
+| Install runtime | uv sync |
+| Install runtime + dev | uv sync --dev |
+| Editable install | uv pip  install -e . |
+| Run tests | pytest |
+| Run tests (incl. slow) | pytest --runslow |
+| Lint | ruff check . |
+| Format | ruff format . |
+| Type-check | mypy grpo_gsm8k |
 
 ---
 
 ## Artifacts & reproducibility
 
-* **Run dirs:** `artifacts/runs/<UTCSTAMP>_<gitsha>/`
+* Run dirs: `artifacts/runs/<UTCSTAMP>_<gitsha>/`
+* Datasets: `artifacts/gsm8k/{train,val,test}.jsonl`
+* Baselines: `artifacts/baselines/*.jsonl`
 
-  * `sys/…` — driver/GPU/topo, env, `pip.freeze`, timestamps, etc.
-  * `run_manifest.json` — environment + package versions
-  * `locks/requirements.lock.txt` — exact deps used (`uv export --strict`)
-  * `data.sha256` — checksums for `/data` (from `scripts/snapshot_dataset.sh`)
-* **Datasets:** `artifacts/gsm8k/{train,test,val}.jsonl` and optional HF snapshot `artifacts/gsm8k_hf_snapshot/`
-* **Baselines:** `artifacts/baselines/*.jsonl` — inputs, model outputs, reward, gold
-
-**Determinism toggles**
-
-* Container defaults favor speed (`NVIDIA_TF32_OVERRIDE=1` in the Dockerfile). For stricter reproducibility at runtime set `NVIDIA_TF32_OVERRIDE=0` and call `seed_everything(..., deterministic=True)` (see `repro.py`).
-* Additional env defaults in `scripts/env.det.sh`:
-  `CUBLAS_WORKSPACE_CONFIG=:4096:8`, `TOKENIZERS_PARALLELISM=false`, `PYTHONHASHSEED=0`, `OMP_NUM_THREADS=1`.
+Determinism: set `NVIDIA_TF32_OVERRIDE=0` and seed via `repro.py` if needed.
 
 ---
 
@@ -227,62 +281,21 @@ docker push ghcr.io/<GITHUB_USERNAME>/grpo-gsm8k:latest
 ```
 grpo-gsm8k/
 ├── grpo_gsm8k/
-│   ├── cli.py                # sysinfo → data prep → vLLM eval → locks → snapshots
-│   ├── data_prep.py          # fetch + pin GSM8K; write JSONL and optional HF snapshot
-│   ├── fast_eval_vllm.py     # baseline eval via vLLM (greedy, temp=0)
-│   ├── prompts.py            # Qwen-style chat templates; batch rendering helpers
-│   ├── repro.py              # seeds, manifests, sampling params, env capture
-│   └── reward_fn.py          # parse \boxed{...}; exact-match vs GSM8K gold
-├── scripts/                  # sysinfo, env, locks, dataset snapshot, remote sync (rclone/B2)
 ├── tests/
-├── Dockerfile                # CUDA 12.8, uv, snapshot-locked apt
-├── pyproject.toml            # deps, linters, pytest config, uv cu128 index
-└── artifacts/                # outputs (created at runtime)
-```
-
----
-
-## Developer tooling & tests
-
-```bash
-uv sync --dev
-pre-commit install
-pre-commit run --all-files
-```
-
-Run (non-slow) tests locally with:
-```bash
-PYTHONPATH=. uv run --no-project \
-  --with pytest,pytest-asyncio,aiohttp,datasets,torch,transformers,vllm \
-  python -m pytest -q
-```
-
-Run parity tests in the same environment as RunPod (container, no GPU) with:
-```bash
-docker run --rm -it -v "$PWD":/workspace ghcr.io/davidbellamy/grpo-gsm8k:latest \
-  bash -lc 'pytest -q -m "not slow"'
-```
-
-Run all tests (incl. ones needing GPU) with:
-```bash
-docker run --rm -it --gpus all -v "$PWD":/workspace ghcr.io/davidbellamy/grpo-gsm8k:latest \
-  bash -lc 'pytest -q'
+├── artifacts/
+└── pyproject.toml
 ```
 
 ---
 
 ## Troubleshooting
 
-* **No GPUs in Docker**: install/configure NVIDIA Container Toolkit; run with `--gpus all`.
-* **CUDA OOM**: reduce `--max_new_tokens`, lower `--gpu_mem_util` (e.g., `0.80`), increase `--tp_size`, or switch to a smaller model.
-* **Slow downloads**: mount a persistent HF cache (`-v $HOME/.cache/huggingface:/workspace/.cache/huggingface`).
-* **Pin dataset revision**: pass `--revision <commit-or-tag>` to `cli eval` (propagates to `datasets.load_dataset`).
-* **WANDB offline/online**: use `WANDB_MODE=offline` locally; store `WANDB_API_KEY` as a secret on your provider.
+* Module not found: ensure `uv pip install -e .` or run with `PYTHONPATH=.`
+* Dev deps missing: run `uv sync --dev`
+* CUDA OOM: lower `--gpu_mem_util` or use smaller model
 
 ---
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
-
----
+MIT — see `LICENSE`.

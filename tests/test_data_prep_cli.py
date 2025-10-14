@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-import grpo_gsm8k.data_prep as dp
+import grpo_gsm8k.data.data_prep as dp
 
 
 class FakeDS(dict):

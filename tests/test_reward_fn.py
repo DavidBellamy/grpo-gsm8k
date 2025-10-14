@@ -1,4 +1,4 @@
-from grpo_gsm8k.reward_fn import exact_match, extract_answer_colon, reward_from_text
+from grpo_gsm8k.evaluation.reward_fn import exact_match, extract_answer_colon, reward_from_text
 
 
 def test_extract_answer_colon_variants() -> None:

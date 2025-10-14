@@ -1,7 +1,7 @@
 import torch
 
-from grpo_gsm8k.get_response_log_probs import get_response_log_probs
-from grpo_gsm8k.per_token_entropy import compute_entropy
+from grpo_gsm8k.core.get_response_log_probs import get_response_log_probs
+from grpo_gsm8k.core.per_token_entropy import compute_entropy
 
 
 class ModelOut:

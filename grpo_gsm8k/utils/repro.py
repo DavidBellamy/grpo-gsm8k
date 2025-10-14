@@ -4,13 +4,12 @@ Reproducibility utilities for evals and training.
 Usage
 -----
 from grpo_gsm8k.repro import (
-    SEED, seed_everything, vllm_sampling_params, write_run_manifest, stable_hash
+    SEED, seed_everything, write_run_manifest, stable_hash
 )
 
 seed_everything(SEED, deterministic=False)  # True => stricter reproducibility (slower)
-sp = vllm_sampling_params(max_tokens=384, seed=SEED)  # pass to vLLM offline API
 write_run_manifest("artifacts/baselines/run_manifest.json", extras={
-    "model_id": "Qwen/Qwen2.5-7B-Instruct",
+    "model_id": "Qwen/Qwen2.5-Math-1.5B",
     "eval_path": "artifacts/gsm8k/val.jsonl",
 })
 """
@@ -24,7 +23,7 @@ import platform
 import random
 import subprocess
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 # Optional heavy deps — make import resilient so this module works in data-only contexts
 try:
@@ -117,19 +116,6 @@ def seed_everything(seed: int = SEED, deterministic: bool = False) -> int:
     return seed
 
 
-def vllm_sampling_params(max_tokens: int, seed: int = SEED) -> Any:  # retuns vllm.SamplingParams
-    """Always pass an explicit SamplingParams, even for greedy. Lazy-import vLLM."""
-    # Lazy import so this module can be used without vLLM installed
-    from vllm import SamplingParams
-
-    return SamplingParams(
-        temperature=0.0,
-        top_p=1.0,
-        max_tokens=max_tokens,
-        seed=seed,
-    )
-
-
 def _try_run(cmd: list[str]) -> str | None:
     try:
         out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=2)
@@ -208,43 +194,3 @@ def system_info(info: dict[str, Any] | None = None) -> dict:
         info["gpu"]["nvidia_smi"] = smi
 
     return info
-
-
-if TYPE_CHECKING:
-    import wandb
-
-
-def wandb_run_init(project: str, name: str | None, config: dict) -> wandb.sdk.wandb_run.Run:
-    import wandb
-
-    run = wandb.init(
-        project=project,
-        name=name,
-        config=config,
-        save_code=True,
-        reinit=False,
-    )
-    return run
-
-
-def dataset_revision(dataset_id: str, config_name: str = "main") -> tuple[str, str]:
-    """Return (revision, split_sizes) as strings for manifest/logging."""
-    from datasets import get_dataset_config_info
-
-    info = get_dataset_config_info(dataset_id, config_name)
-    checksums = getattr(info, "download_checksums", None)
-    revision = stable_hash(checksums) if checksums else "unknown"
-    return (
-        revision,
-        f"version={getattr(info, 'version', None)}; \
-            splits={getattr(info, 'splits', {})}",
-    )
-
-
-def dataset_snapshot_meta(dataset_id: str, config_name: str) -> dict:
-    from datasets import get_dataset_config_info
-
-    info = get_dataset_config_info(dataset_id, config_name)
-    # Can't always resolve commit hash here; we record 'version' as a proxy
-    version = getattr(info, "version", None)
-    return {"version": str(version) if version is not None else None}

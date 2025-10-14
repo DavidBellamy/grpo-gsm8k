@@ -1,4 +1,4 @@
-from grpo_gsm8k.format_r1_traces import clean_reasoning
+from grpo_gsm8k.traces.format_r1_traces import clean_reasoning
 
 
 def test_clean_reasoning_filters_instructional_noise_and_keeps_reasoning() -> None:

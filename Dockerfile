@@ -1,5 +1,5 @@
-# H100-friendly, reproducible base (CUDA 12.8 + Ubuntu 22.04)
-FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
+#  Base image = CUDA 12.8 + Ubuntu 22.04
+FROM nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 # YYYYMMDDThhmmssZ from https://snapshot.ubuntu.com/
@@ -16,14 +16,20 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
   apt-get install -y --no-install-recommends \
     build-essential tzdata ca-certificates curl wget unzip git jq bash-completion \
     tmux htop \
-    python3.10 python3.10-venv python3-pip python3.10-dev; \
+    python3.10 python3.10-venv python3-pip python3.10-dev ninja-build; \
   ln -snf /usr/share/zoneinfo/UTC /etc/localtime && echo UTC > /etc/timezone;
 
 ENV TZ=UTC \
   PYTHONUNBUFFERED=1 \
   # toolchain hint for Triton/vLLM
   CC=gcc \
-  CXX=g++
+  CXX=g++ \
+  LANG=C.UTF-8 \
+  LC_CTYPE=C.UTF-8 \
+  CUDA_HOME=/usr/local/cuda \
+  PATH=/usr/local/cuda/bin:$PATH \
+  TORCH_CUDA_ARCH_LIST=90a
+
 
 # ---- Install uv (fast package manager) ----
 # Official guidance: copy the uv binary from the uv image
@@ -50,7 +56,7 @@ ENV VSCODE_CLI_DATA_DIR=/workspace/.vscode-cli \
     VSCODE_CLI_USE_FILE_KEYCHAIN=1 \
     VSCODE_AGENT_FOLDER=/workspace/.vscode-server
 
-# ---- (Optional) Install VS Code CLI at build time ----
+# ---- Install VS Code CLI at build time ----
 # Pin with VSCODE_VERSION=<version or commit> or leave as "latest"
 ARG VSCODE_CLI_OS=cli-linux-x64
 ARG VSCODE_VERSION=latest
@@ -63,8 +69,8 @@ RUN set -eux; \
 
 # ---- Place helpers (no source code baked) ----
 WORKDIR /workspace
-COPY scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY scripts/env.det.sh /etc/profile.d/env.det.sh
+COPY scripts/shell/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY scripts/shell/env.det.sh /etc/profile.d/env.det.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh /etc/profile.d/env.det.sh
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

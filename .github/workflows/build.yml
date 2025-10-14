@@ -8,7 +8,7 @@ on:
       - .dockerignore
       - pyproject.toml
       - uv.lock
-      - scripts/**
+      - scripts/shell/**
       - .github/workflows/build.yml
   workflow_dispatch:
 
