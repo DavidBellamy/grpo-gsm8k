@@ -26,6 +26,7 @@ dependencies = [
   "numpy>=2,<3",
   "wandb>=0.20.0",
   "flashinfer-python>=0.3.1.post1",
+  "tqdm>=4.67.1",
 ]
 
 [tool.uv]

@@ -944,6 +944,7 @@ tqdm==4.67.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     #   datasets
     #   flashinfer-python
     #   gguf
+    #   grpo-gsm8k
     #   huggingface-hub
     #   openai
     #   transformers
