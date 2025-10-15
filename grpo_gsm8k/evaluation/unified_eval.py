@@ -5,6 +5,7 @@ import json
 import logging
 import math
 import random
+import re
 import subprocess
 import sys
 import time
@@ -167,6 +168,47 @@ def compute_bootstrap_ci_binary(
     }
 
 
+def _parse_boxed_numeric(text: str) -> tuple[bool, float | None]:
+    """
+    Return (formatting_ok, value). formatting_ok is True when a \\boxed{...} exists and
+    the boxed content can be parsed into a numeric scalar (int/float or simple \\frac{a}{b}).
+    """
+    # Find all \boxed{...} occurrences; take the last one if multiple
+    matches = re.findall(r"\\boxed\s*\{([^}]*)\}", text, flags=re.DOTALL)
+    if not matches:
+        return False, None
+
+    content = matches[-1]
+    # Normalize
+    s = content.strip()
+    s = s.replace("$", "")
+    s = s.replace(",", "")
+    s = s.replace("−", "-")  # normalize unicode minus
+    s = re.sub(r"\s+", "", s)
+
+    # Try \frac{a}{b}
+    m_frac = re.match(r"\\frac\s*\{\s*([-+]?\d+)\s*\}\s*\{\s*([-+]?\d+)\s*\}", s)
+    if m_frac:
+        try:
+            num = int(m_frac.group(1))
+            den = int(m_frac.group(2))
+            if den == 0:
+                return False, None
+            return True, num / den
+        except Exception:
+            return False, None
+
+    # Plain numeric, including scientific notation
+    if re.match(r"^[-+]?\d+(?:\.\d+)?(?:e[+-]?\d+)?$", s, flags=re.IGNORECASE):
+        try:
+            return True, float(s)
+        except Exception:
+            return False, None
+
+    # Not parseable as numeric
+    return False, None
+
+
 def run_gsm8k_eval(
     model_path: str,
     eval_path: str,
@@ -219,6 +261,12 @@ def run_gsm8k_eval(
 
     results = []
     truncated_count = 0  # track how often generation hits max_tokens limit
+
+    # New counters for error taxonomy
+    format_error_count = 0
+    logic_error_count = 0
+    non_truncated_count = 0
+
     for i, (prompt, data_item) in enumerate(zip(prompts, data)):
         if i % 50 == 0:
             logger.info(f"Processing GSM8K example {i+1}/{len(prompts)}")
@@ -249,6 +297,19 @@ def run_gsm8k_eval(
 
         reward = reward_from_text(output_text, data_item["answer"], "boxed")
 
+        # Determine formatting correctness from last \boxed{...}
+        formatting_ok, _ = _parse_boxed_numeric(output_text)
+        is_truncated = finish_reason == "length"
+
+        # Count error types only for non-truncated completions
+        if not is_truncated:
+            non_truncated_count += 1
+            if reward == 0:
+                if not formatting_ok:
+                    format_error_count += 1
+                else:
+                    logic_error_count += 1
+
         results.append(
             {
                 "id": data_item.get("id", i),
@@ -256,7 +317,9 @@ def run_gsm8k_eval(
                 "output": output_text,
                 "reward": reward,
                 "gold": data_item["answer"],
-                "finish_reason": finish_reason,  # helpful for downstream inspection
+                "finish_reason": finish_reason,
+                "formatting_ok": formatting_ok,
+                "is_truncated": is_truncated,
             }
         )
 
@@ -286,6 +349,10 @@ def run_gsm8k_eval(
     # Truncation rate (finish_reason == "length")
     trunc_rate = (truncated_count / len(results)) if results else 0.0
 
+    # Error rates (exclude truncations from denominator)
+    fmt_err_rate = (format_error_count / non_truncated_count) if non_truncated_count else 0.0
+    logic_err_rate = (logic_error_count / non_truncated_count) if non_truncated_count else 0.0
+
     return {
         "gsm8k_pass@1": pass_at_1,
         "gsm8k_n_examples": len(results),
@@ -295,6 +362,8 @@ def run_gsm8k_eval(
         "gsm8k_completion_len_p50": comp_p50,
         "gsm8k_completion_len_p95": comp_p95,
         "gsm8k_truncation_rate": trunc_rate,
+        "gsm8k_format_error_rate": fmt_err_rate,
+        "gsm8k_logic_error_rate": logic_err_rate,
     }
 
 
@@ -452,6 +521,12 @@ def main(
                         ),
                         "metrics/gsm8k_truncation_rate": gsm8k_results.get(
                             "gsm8k_truncation_rate", 0.0
+                        ),
+                        "metrics/gsm8k_format_error_rate": gsm8k_results.get(
+                            "gsm8k_format_error_rate", 0.0
+                        ),
+                        "metrics/gsm8k_logic_error_rate": gsm8k_results.get(
+                            "gsm8k_logic_error_rate", 0.0
                         ),
                     }
                 )
