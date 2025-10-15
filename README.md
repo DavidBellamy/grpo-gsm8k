@@ -1,7 +1,5 @@
 # Simple RL for Math Reasoning
 
-⚠️ Under construction. More soon!
-
 This project is for SFT, expert iteration, and RL post-training of Qwen models on GSM8k problems. It is designed for single-node jobs.
 
 Includes: **reproducible containers**, **determinism toggles**, **dataset pinning/snapshots**, and a **vLLM baseline eval**.
@@ -136,6 +134,88 @@ python -m grpo_gsm8k.cli sft \
 
 ---
 
+# Evaluation
+
+Run all benchmarks with a single command:
+
+```bash
+# Evaluate HuggingFace model on all benchmarks
+python -m grpo_gsm8k.cli unified_eval \
+  --model_path "Qwen/Qwen2.5-Math-1.5B" \
+  --limit 100 \
+  --wandb_project "grpo-gsm8k" \
+  --run_name "qwen25_math_unified_eval"
+
+# Evaluate local checkpoint
+python -m grpo_gsm8k.cli unified_eval \
+  --model_path "./artifacts/checkpoints/step_90" \
+  --eval_suites gsm8k hendrycks_math mmlu \
+  --limit 200
+
+# Run only specific benchmarks
+python -m grpo_gsm8k.cli unified_eval \
+  --model_path "Qwen/Qwen2.5-Math-1.5B" \
+  --eval_suites gsm8k mmlu arc_challenge \
+  --gsm8k_k_shot 8 \
+  --lm_eval_fewshot 4
+```
+
+The unified eval automatically:
+- Detects whether the model path is a HuggingFace repo or local checkpoint
+- Spins up vLLM servers as needed for lm-eval benchmarks
+- Runs GSM8K evaluation directly with vLLM
+- Logs all results to the same W&B run
+- Saves unified results to `artifacts/unified_eval/`
+
+### Evaluation Suites
+
+- `all` (default): Run GSM8K + all lm-eval benchmarks
+- `gsm8k`: Run only GSM8K evaluation
+- `lm_eval`: Run all lm-eval benchmarks
+- Individual task names: `hendrycks_math`, `mmlu`, `arc_challenge`, `hellaswag`, `winogrande`, `truthfulqa_mc2`, `wikitext`
+
+## Individual Evaluation Commands
+
+### GSM8K Only
+
+```bash
+python -m grpo_gsm8k.cli eval \
+  --model_id "Qwen/Qwen2.5-Math-1.5B" \
+  --limit 100
+```
+
+### lm-eval Only (Manual)
+
+Launch vllm server: `vllm serve qwen/qwen2.5-math-1.5b --host 127.0.0.1 --port 8000 --dtype auto`
+
+Or for your own checkpoint: `vllm serve path/to/your/model   --host 127.0.0.1 --port 8000 --dtype auto   --served-model-name {your_model_name}`
+
+```
+python -m lm_eval \
+--model local-completions \
+--model_args "model=qwen/qwen2.5-math-1.5b,base_url=http://127.0.0.1:8000/v1/completions,num_concurrent=10,tokenized_requests=True,tokenizer_backend=huggingface,max_length=4096" \
+--tasks hendrycks_math,mmlu,arc_challenge,hellaswag,winogrande,truthfulqa_mc2,wikitext \
+--num_fewshot 4 \
+--batch_size 8 \
+--gen_kwargs '{"temperature":0,"do_sample":false,"max_new_tokens":2048}' \
+--output_path ./artifacts/lm_eval_out/qwen_vllm_math_4shot_bs8
+```
+
+or your own checkpoint:
+
+export OPENAI_API_KEY=EMPTY
+export TOKENIZER_ABS="$(pwd)/artifacts/step_90"
+
+python -m lm_eval \
+--model local-completions \
+--model_args "base_url=http://127.0.0.1:8000/v1/completions,model=qwen-math-step90,num_concurrent=10,tokenized_requests=False,tokenizer=${TOKENIZER_ABS},tokenizer_backend=huggingface,max_length=4096" \
+--tasks hendrycks_math,mmlu,arc_challenge,hellaswag,winogrande,truthfulqa_mc2,wikitext \
+--num_fewshot 4 \
+--batch_size 8 \
+--gen_kwargs '{"temperature":0,"do_sample":false,"max_new_tokens":2048}' \
+--output_path ./lm_eval_out/step90_math_4shot_bs8
+
+
 ## Run on RunPod (provider notes)
 
 The container is provider-agnostic. For RunPod specifically:
@@ -198,7 +278,7 @@ python -m grpo_gsm8k.data_prep
 ### vLLM eval only
 
 ```bash
-python -m grpo_gsm8k.fast_eval_vllm \
+python -m grpo_gsm8k.gsm8k_eval \
   --model_id Qwen/Qwen2.5-Math-1.5B \
   --eval_path artifacts/gsm8k/val.jsonl \
   --limit 200 \

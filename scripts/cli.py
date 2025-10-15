@@ -17,7 +17,7 @@ Subcommands:
 
 Options:
     --model_id          Model identifier (default: "Qwen/Qwen2.5-Math-1.5B").
-    --eval_path         Path to evaluation data (default: "artifacts/gsm8k/val.jsonl").
+    --eval_path         Path to evaluation data (default: "artifacts/gsm8k/test.jsonl").
     --limit             Limit number of evaluation samples.
     --batch_size        Batch size for evaluation (default: 8).
     --max_new_tokens    Maximum number of new tokens to generate (default: 384).
@@ -49,7 +49,7 @@ import torch
 import wandb
 
 from grpo_gsm8k.data import data_prep
-from grpo_gsm8k.evaluation.fast_eval_vllm import main as vllm_eval_main
+from grpo_gsm8k.evaluation.gsm8k_eval import main as vllm_eval_main
 from grpo_gsm8k.training.sft import train_sft_on_r1_pairs
 from grpo_gsm8k.utils.repro import write_run_manifest
 
@@ -286,13 +286,14 @@ def cmd_sft(args: argparse.Namespace) -> None:
     )
 
 
-def main() -> None:
-    p = argparse.ArgumentParser()
-    sub = p.add_subparsers(dest="cmd", required=True)
+def create_cli() -> argparse.ArgumentParser:
+    """Create the main CLI parser with subcommands."""
+    parser = argparse.ArgumentParser(description="GRPO GSM8K Training and Evaluation")
+    subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    e = sub.add_parser("eval", help="Run evaluation with unified logging & artifacts")
+    e = subparsers.add_parser("eval", help="Run evaluation with unified logging & artifacts")
     e.add_argument("--model_id", default="Qwen/Qwen2.5-Math-1.5B")
-    e.add_argument("--eval_path", default="artifacts/gsm8k/val.jsonl")
+    e.add_argument("--eval_path", default="artifacts/gsm8k/test.jsonl")
     e.add_argument("--limit", type=int, default=None)
     e.add_argument("--batch_size", type=int, default=8)
     e.add_argument("--max_new_tokens", type=int, default=384)
@@ -308,7 +309,7 @@ def main() -> None:
     e.add_argument("--cache_dir", default="/workspace/.cache/huggingface")
     e.set_defaults(func=cmd_eval)
 
-    s = sub.add_parser("sft", help="Run SFT on R1 traces with W&B logging")
+    s = subparsers.add_parser("sft", help="Run SFT on R1 traces with W&B logging")
     s.add_argument("--train_data_path", default="artifacts/tokenized/*.pt")
     s.add_argument(
         "--eval_data_path",
@@ -359,8 +360,116 @@ def main() -> None:
     )
     s.set_defaults(func=cmd_sft)
 
-    args = p.parse_args()
-    args.func(args)
+    # Unified eval subcommand
+    unified_eval_parser = subparsers.add_parser(
+        "unified_eval", help="Run unified evaluation suite (GSM8K + lm-eval benchmarks)"
+    )
+
+    # Model and output args
+    unified_eval_parser.add_argument(
+        "--model_path",
+        type=str,
+        default="Qwen/Qwen2.5-Math-1.5B",
+        help="HuggingFace model repo or local checkpoint directory",
+    )
+    unified_eval_parser.add_argument(
+        "--eval_suites",
+        nargs="+",
+        default=["all"],
+        help="Evaluation suites to run: 'all', 'gsm8k', 'lm_eval', or specific task names",
+    )
+    unified_eval_parser.add_argument(
+        "--limit", type=int, help="Limit number of examples per evaluation"
+    )
+    unified_eval_parser.add_argument("--output_dir", type=str, default="./artifacts/unified_eval")
+
+    # W&B args
+    unified_eval_parser.add_argument("--wandb_project", type=str, default="grpo-gsm8k")
+    unified_eval_parser.add_argument("--run_name", type=str, help="W&B run name")
+
+    # GSM8K specific args
+    unified_eval_parser.add_argument(
+        "--gsm8k_eval_path", type=str, default="artifacts/gsm8k/test.jsonl"
+    )
+    unified_eval_parser.add_argument("--gsm8k_max_tokens", type=int, default=2048)
+    unified_eval_parser.add_argument("--gsm8k_k_shot", type=int, default=8)
+
+    # lm-eval specific args
+    unified_eval_parser.add_argument(
+        "--lm_eval_tasks",
+        nargs="+",
+        default=[
+            "hendrycks_math",
+            "mmlu",
+            "arc_challenge",
+            "hellaswag",
+            "winogrande",
+            "truthfulqa_mc2",
+            "wikitext",
+        ],
+    )
+    unified_eval_parser.add_argument("--lm_eval_fewshot", type=int, default=4)
+    unified_eval_parser.add_argument("--lm_eval_batch_size", type=int, default=8)
+    unified_eval_parser.add_argument("--lm_eval_max_tokens", type=int, default=2048)
+
+    # vLLM args
+    unified_eval_parser.add_argument("--tp_size", type=int, default=1)
+    unified_eval_parser.add_argument("--gpu_mem_util", type=float, default=0.92)
+
+    return parser
+
+
+def main() -> None:
+    """Main CLI entry point."""
+    parser = create_cli()
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return
+
+    _setup_logging(Path("."), logging.INFO)
+
+    if args.command == "eval":
+        from grpo_gsm8k.evaluation.gsm8k_eval import main as eval_main
+
+        eval_main(**{k: v for k, v in vars(args).items() if k != "command"})
+    elif args.command == "unified_eval":
+        from grpo_gsm8k.evaluation.unified_eval import main as unified_eval_main
+
+        unified_eval_main(**{k: v for k, v in vars(args).items() if k != "command"})
+    elif args.command == "sft":
+        from grpo_gsm8k.training.sft import train_sft_on_r1_pairs
+
+        train_sft_on_r1_pairs(
+            train_data_path=args.train_data_path,
+            eval_data_path=getattr(args, "eval_data_path", None),
+            model_id=args.model_id,
+            device=args.device,
+            vllm_device=args.vllm_device,
+            vllm_gpu_memory_utilization=args.vllm_gpu_memory_util,
+            microbatch_size=args.microbatch_size,
+            num_epochs=args.num_epochs,
+            min_tokens_per_update=args.min_tokens_per_update,
+            max_update_steps=args.max_update_steps,
+            learning_rate=args.learning_rate,
+            adamw_beta1=args.adamw_beta1,
+            adamw_beta2=args.adamw_beta2,
+            adamw_eps=args.adamw_eps,
+            weight_decay=args.weight_decay,
+            max_total_tokens=args.max_total_tokens,
+            eval_every=args.eval_every,
+            eval_examples=args.eval_examples,
+            gen_max_new_tokens=args.gen_max_new_tokens,
+            gen_temperature=args.gen_temperature,
+            gen_top_p=args.gen_top_p,
+            model_dtype=None,  # handled in train_sft_on_r1_pairs
+            checkpoint_dir=args.checkpoint_dir,
+            resume_from=args.resume_from,
+            max_grad_norm=args.max_grad_norm,
+        )
+    else:
+        raise ValueError(f"Unknown command: {args.command}")
 
 
 if __name__ == "__main__":

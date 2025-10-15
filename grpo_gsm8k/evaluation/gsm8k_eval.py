@@ -101,14 +101,14 @@ def single_eval_run(
 
 def main(
     model_id: str = "Qwen/Qwen2.5-Math-1.5B",
-    eval_path: str = "artifacts/gsm8k/val.jsonl",
+    eval_path: str = "artifacts/gsm8k/test.jsonl",
     limit: int | None = None,
     max_new_tokens: int = 1024,
     tp_size: int = 1,
     wandb_project: str = "grpo-gsm8k",
     gpu_mem_util: float = 0.92,
     run_name: str | None = None,
-    k_shot: int = 0,
+    k_shot: int = 8,
     ci_reps: int = 1,
 ) -> dict[str, float]:
     """Run evaluation with optional confidence interval analysis."""
@@ -202,12 +202,12 @@ if __name__ == "__main__":
 
     p = argparse.ArgumentParser()
     p.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Math-1.5B")
-    p.add_argument("--eval_path", type=str, default="artifacts/gsm8k/val.jsonl")
+    p.add_argument("--eval_path", type=str, default="artifacts/gsm8k/test.jsonl")
     p.add_argument("--limit", type=int, default=None)
-    p.add_argument("--max_new_tokens", type=int, default=384)
+    p.add_argument("--max_new_tokens", type=int, default=2048)
     p.add_argument("--gpu_mem_util", type=float, default=0.92)
     p.add_argument(
-        "--k_shot", type=int, default=0, help="Number of few-shot examples (0 for zero-shot)"
+        "--k_shot", type=int, default=8, help="Number of few-shot examples (0 for zero-shot)"
     )
     p.add_argument(
         "--ci_reps",

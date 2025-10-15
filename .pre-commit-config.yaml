@@ -10,7 +10,7 @@ repos:
     rev: v1.11.2
     hooks:
       - id: mypy
-        additional_dependencies: []
+        additional_dependencies: [types-requests>=2.32]
 
   - repo: https://github.com/astral-sh/uv-pre-commit
     rev: 0.8.17
