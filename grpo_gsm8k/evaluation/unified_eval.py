@@ -4,6 +4,7 @@ import argparse
 import json
 import logging
 import subprocess
+import sys
 import time
 from pathlib import Path
 from types import TracebackType
@@ -78,7 +79,7 @@ class VLLMServerManager:
         import requests
 
         base_url = f"http://{self.host}:{self.port}"
-        for i in range(120):  # Wait up to 120 seconds
+        for i in range(240):  # Wait up to 240 seconds
             try:
                 response = requests.get(f"{base_url}/v1/models", timeout=5)
                 if response.status_code == 200:
@@ -95,7 +96,14 @@ class VLLMServerManager:
             logger.error(f"vLLM server startup failed. STDOUT: {stdout}")
             logger.error(f"vLLM server startup failed. STDERR: {stderr}")
 
-        raise RuntimeError("vLLM server failed to start within 120 seconds")
+        try:
+            logger.error("Timed out after 240s; terminating vLLM server")
+            self.process.terminate()
+            self.process.wait(timeout=10)
+        except Exception:
+            self.process.kill()
+
+        raise RuntimeError("vLLM server failed to start within 240 seconds")
 
     def __exit__(
         self,
@@ -177,7 +185,7 @@ def run_gsm8k_eval(
                 "top_p": 1.0,
                 "stream": False,
             },
-            timeout=60,
+            timeout=600,
         )
 
         if response.status_code != 200:
@@ -373,11 +381,16 @@ def main(
                     all_results["lm_eval"] = lm_eval_results
 
                     # Log lm-eval results to W&B
-                    for task, task_results in lm_eval_results.items():
-                        if isinstance(task_results, dict):
-                            for metric, value in task_results.items():
-                                if isinstance(value, int | float):
-                                    wandb.log({f"metrics/{task}_{metric}": value})
+                    for task, metrics in lm_eval_results.items():
+                        if not isinstance(metrics, dict):
+                            continue
+                        to_log = {}
+                        for metric_name, val in metrics.items():
+                            if isinstance(val, int | float):
+                                # keep the original metric name to stay 1:1 with lm-eval
+                                to_log[f"metrics/lm_eval/{task}/{metric_name}"] = val
+                        if to_log:
+                            wandb.log(to_log)
 
         # Save unified results
         results_file = output_path / "unified_results.json"
@@ -455,7 +468,7 @@ def run_lm_eval(
     model_args = (
         f"model={model_path},"
         f"base_url={completions_url},"
-        f"num_concurrent=1,"
+        f"num_concurrent=10,"
         f"tokenized_requests=false,"
         f"tokenizer={actual_tokenizer_path},"
         f"tokenizer_backend=huggingface",
@@ -504,10 +517,11 @@ def run_lm_eval(
     try:
         result = subprocess.run(
             cmd,
-            capture_output=True,
             text=True,
             env=env,
             timeout=1800,  # 30 minute timeout
+            stdout=sys.stdout,
+            stderr=sys.stderr,
         )
     except subprocess.TimeoutExpired:
         logger.error("lm-eval command timed out after 30 minutes")
@@ -525,17 +539,25 @@ def run_lm_eval(
 
     # Parse results
     results_file = output_path / "results.json"
-    if results_file.exists():
-        with results_file.open(encoding="utf-8") as f:
-            lm_eval_results = json.load(f)
-        logger.info(f"Loaded results from {results_file}")
-        return lm_eval_results.get("results", {})
-    else:
-        logger.warning(f"Results file not found at {results_file}")
-        if output_path.exists():
-            files = list(output_path.glob("*"))
-            logger.info(f"Files in output directory: {files}")
-        return {}
+    if not results_file.exists():
+        # Look for newest results_*.json anywhere under output_path
+        # (includes subdirs like Qwen__Qwen2.5-Math-1.5B/)
+        candidates = sorted(
+            output_path.rglob("results_*.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not candidates:
+            logger.warning(f"Results file not found under {output_path}")
+            return {}
+        results_file = candidates[0]
+        logger.info(f"Using discovered results file at {results_file}")
+
+    with results_file.open(encoding="utf-8") as f:
+        raw = json.load(f)
+
+    logger.info(f"Loaded results from {results_file}")
+    return raw.get("results", {})
 
 
 if __name__ == "__main__":
