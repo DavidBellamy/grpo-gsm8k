@@ -218,6 +218,7 @@ def run_gsm8k_eval(
     base_url = f"http://{server_host}:{server_port}/v1/completions"
 
     results = []
+    truncated_count = 0  # track how often generation hits max_tokens limit
     for i, (prompt, data_item) in enumerate(zip(prompts, data)):
         if i % 50 == 0:
             logger.info(f"Processing GSM8K example {i+1}/{len(prompts)}")
@@ -240,7 +241,11 @@ def run_gsm8k_eval(
             continue
 
         result = response.json()
-        output_text = result["choices"][0]["text"]
+        choice = result["choices"][0]
+        output_text = choice["text"]
+        finish_reason = choice.get("finish_reason")
+        if finish_reason == "length":
+            truncated_count += 1
 
         reward = reward_from_text(output_text, data_item["answer"], "boxed")
 
@@ -251,6 +256,7 @@ def run_gsm8k_eval(
                 "output": output_text,
                 "reward": reward,
                 "gold": data_item["answer"],
+                "finish_reason": finish_reason,  # helpful for downstream inspection
             }
         )
 
@@ -277,6 +283,9 @@ def run_gsm8k_eval(
     comp_p50 = _percentile(comp_lens, 0.5) if comp_lens else 0.0
     comp_p95 = _percentile(comp_lens, 0.95) if comp_lens else 0.0
 
+    # Truncation rate (finish_reason == "length")
+    trunc_rate = (truncated_count / len(results)) if results else 0.0
+
     return {
         "gsm8k_pass@1": pass_at_1,
         "gsm8k_n_examples": len(results),
@@ -285,6 +294,7 @@ def run_gsm8k_eval(
         "gsm8k_pass@1_ci_upper": stats["ci_upper"],
         "gsm8k_completion_len_p50": comp_p50,
         "gsm8k_completion_len_p95": comp_p95,
+        "gsm8k_truncation_rate": trunc_rate,
     }
 
 
@@ -439,6 +449,9 @@ def main(
                         ),
                         "metrics/gsm8k_completion_len_p95": gsm8k_results.get(
                             "gsm8k_completion_len_p95", 0.0
+                        ),
+                        "metrics/gsm8k_truncation_rate": gsm8k_results.get(
+                            "gsm8k_truncation_rate", 0.0
                         ),
                     }
                 )
