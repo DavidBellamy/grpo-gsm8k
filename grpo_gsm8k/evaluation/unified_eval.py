@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
+import random
 import subprocess
 import sys
 import time
@@ -122,6 +124,48 @@ class VLLMServerManager:
                 self.process.wait()
 
 
+def _percentile(xs: list[float], q: float) -> float:
+    """Linear interpolation percentile."""
+    if not xs:
+        return 0.0
+    xs_sorted = sorted(xs)
+    k = (len(xs_sorted) - 1) * q
+    f = math.floor(k)
+    c = math.ceil(k)
+    if f == c:
+        return float(xs_sorted[int(k)])
+    return float(xs_sorted[f] + (xs_sorted[c] - xs_sorted[f]) * (k - f))
+
+
+def compute_bootstrap_ci_binary(
+    values: list[int] | list[float],
+    n_boot: int = 1000,
+    alpha: float = 0.05,
+    seed: int | None = None,
+) -> dict[str, float]:
+    """Bootstrap CI for pass@1 over binary rewards."""
+    n = len(values)
+    if n == 0:
+        return {"mean": 0.0, "std": 0.0, "ci_lower": 0.0, "ci_upper": 0.0}
+    rng = random.Random(seed)
+    means: list[float] = []
+    for _ in range(n_boot):
+        sample = [values[rng.randrange(n)] for _ in range(n)]
+        means.append(sum(sample) / n)
+    mean_obs = sum(values) / n
+    mu = sum(means) / len(means)
+    var = sum((m - mu) ** 2 for m in means) / (len(means) - 1) if len(means) > 1 else 0.0
+    std = math.sqrt(var)
+    lower = _percentile(means, alpha / 2)
+    upper = _percentile(means, 1 - alpha / 2)
+    return {
+        "mean": float(mean_obs),
+        "std": float(std),
+        "ci_lower": float(lower),
+        "ci_upper": float(upper),
+    }
+
+
 def run_gsm8k_eval(
     model_path: str,
     eval_path: str,
@@ -131,6 +175,8 @@ def run_gsm8k_eval(
     server_host: str = "127.0.0.1",
     server_port: int = 8000,
     tokenizer_path: str | None = None,
+    bootstrap_samples: int = 10,
+    ci_alpha: float = 0.05,
 ) -> dict[str, Any]:
     """Run GSM8K evaluation using vLLM server."""
     logger.info("Running GSM8K evaluation")
@@ -210,10 +256,25 @@ def run_gsm8k_eval(
     pass_at_1 = sum(r["reward"] for r in results) / len(results) if results else 0.0
     logger.info(f"GSM8K evaluation complete: {pass_at_1:.3f} pass@1 on {len(results)} examples")
 
+    # Bootstrap CI over per-example rewards
+    rewards = [int(r["reward"]) for r in results]
+    stats = (
+        compute_bootstrap_ci_binary(rewards, n_boot=bootstrap_samples, alpha=ci_alpha)
+        if results
+        else {
+            "mean": 0.0,
+            "std": 0.0,
+            "ci_lower": 0.0,
+            "ci_upper": 0.0,
+        }
+    )
+
     return {
         "gsm8k_pass@1": pass_at_1,
         "gsm8k_n_examples": len(results),
         "gsm8k_results": results,
+        "gsm8k_pass@1_ci_lower": stats["ci_lower"],
+        "gsm8k_pass@1_ci_upper": stats["ci_upper"],
     }
 
 
@@ -228,6 +289,8 @@ def main(
     gsm8k_eval_path: str = "artifacts/gsm8k/test.jsonl",
     gsm8k_max_tokens: int = 1024,
     gsm8k_k_shot: int = 8,
+    gsm8k_bootstrap_samples: int = 10,
+    gsm8k_ci_alpha: float = 0.05,
     # lm-eval specific args
     lm_eval_tasks: list[str] | None = None,
     lm_eval_fewshot: int = 4,
@@ -305,6 +368,8 @@ def main(
         "eval_suites": eval_suites,
         "limit": limit,
         "gsm8k_k_shot": gsm8k_k_shot,
+        "gsm8k_bootstrap_samples": gsm8k_bootstrap_samples,
+        "gsm8k_ci_alpha": gsm8k_ci_alpha,
         "lm_eval_fewshot": lm_eval_fewshot,
         "tp_size": tp_size,
         "gpu_mem_util": gpu_mem_util,
@@ -343,6 +408,8 @@ def main(
                     server_host=server.host,
                     server_port=server.port,
                     tokenizer_path=tokenizer_path,
+                    bootstrap_samples=gsm8k_bootstrap_samples,
+                    ci_alpha=gsm8k_ci_alpha,
                 )
                 all_results.update(gsm8k_results)
 
@@ -351,6 +418,12 @@ def main(
                     {
                         "metrics/gsm8k_pass@1": gsm8k_results["gsm8k_pass@1"],
                         "metrics/gsm8k_n_examples": gsm8k_results["gsm8k_n_examples"],
+                        "metrics/gsm8k_pass@1_ci_lower": gsm8k_results.get(
+                            "gsm8k_pass@1_ci_lower", 0.0
+                        ),
+                        "metrics/gsm8k_pass@1_ci_upper": gsm8k_results.get(
+                            "gsm8k_pass@1_ci_upper", 0.0
+                        ),
                     }
                 )
 
@@ -594,6 +667,18 @@ if __name__ == "__main__":
     parser.add_argument("--gsm8k_eval_path", type=str, default="artifacts/gsm8k/test.jsonl")
     parser.add_argument("--gsm8k_max_tokens", type=int, default=1024)
     parser.add_argument("--gsm8k_k_shot", type=int, default=8)
+    parser.add_argument(
+        "--gsm8k_bootstrap_samples",
+        type=int,
+        default=10,
+        help="Number of bootstrap resamples for CI over GSM8K pass@1",
+    )
+    parser.add_argument(
+        "--gsm8k_ci_alpha",
+        type=float,
+        default=0.05,
+        help="Alpha for GSM8K bootstrap CI (0.05 -> 95% CI)",
+    )
 
     # lm-eval specific args
     parser.add_argument(
