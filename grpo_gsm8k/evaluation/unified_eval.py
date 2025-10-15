@@ -8,6 +8,7 @@ import random
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from types import TracebackType
 from typing import Any
@@ -124,7 +125,7 @@ class VLLMServerManager:
                 self.process.wait()
 
 
-def _percentile(xs: list[float], q: float) -> float:
+def _percentile(xs: Sequence[float], q: float) -> float:
     """Linear interpolation percentile."""
     if not xs:
         return 0.0
@@ -269,12 +270,21 @@ def run_gsm8k_eval(
         }
     )
 
+    # Completion length stats (token counts) for GSM8K completions
+    comp_lens = (
+        [len(tok.encode(r["output"], add_special_tokens=False)) for r in results] if results else []
+    )
+    comp_p50 = _percentile(comp_lens, 0.5) if comp_lens else 0.0
+    comp_p95 = _percentile(comp_lens, 0.95) if comp_lens else 0.0
+
     return {
         "gsm8k_pass@1": pass_at_1,
         "gsm8k_n_examples": len(results),
         "gsm8k_results": results,
         "gsm8k_pass@1_ci_lower": stats["ci_lower"],
         "gsm8k_pass@1_ci_upper": stats["ci_upper"],
+        "gsm8k_completion_len_p50": comp_p50,
+        "gsm8k_completion_len_p95": comp_p95,
     }
 
 
@@ -423,6 +433,12 @@ def main(
                         ),
                         "metrics/gsm8k_pass@1_ci_upper": gsm8k_results.get(
                             "gsm8k_pass@1_ci_upper", 0.0
+                        ),
+                        "metrics/gsm8k_completion_len_p50": gsm8k_results.get(
+                            "gsm8k_completion_len_p50", 0.0
+                        ),
+                        "metrics/gsm8k_completion_len_p95": gsm8k_results.get(
+                            "gsm8k_completion_len_p95", 0.0
                         ),
                     }
                 )
