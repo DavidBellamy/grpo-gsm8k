@@ -16,27 +16,19 @@ write_run_manifest("artifacts/baselines/run_manifest.json", extras={
 
 from __future__ import annotations
 
+import datetime
 import hashlib
 import json
+import logging
 import os
 import platform
 import random
 import subprocess
-from pathlib import Path
 from typing import Any
 
-# Optional heavy deps — make import resilient so this module works in data-only contexts
-try:
-    import numpy as _np
-except Exception:
-    _np = None
-np: Any | None = _np
-
-try:
-    import torch as _torch
-except Exception:
-    _torch = None
-torch: Any | None = _torch
+import numpy as np
+import torch
+import wandb
 
 # ---- Single source of truth for RNG seed -------------------------------------
 
@@ -124,10 +116,10 @@ def _try_run(cmd: list[str]) -> str | None:
         return None
 
 
-def write_run_manifest(path: str, extras: dict[str, Any] | None = None) -> None:
+def write_run_manifest(extras: dict[str, Any] | None = None) -> None:
     """
-    Write a small JSON manifest with environment, package, and GPU info.
-    Ensures parent directory exists.
+    Log a small JSON manifest with environment, package, and GPU info.
+    Expects an active wandb run
     """
     info: dict[str, Any] = {
         "seed": SEED,
@@ -172,10 +164,16 @@ def write_run_manifest(path: str, extras: dict[str, Any] | None = None) -> None:
     if extras:
         info.update(extras)
 
-    out_path = Path(path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w") as f:
-        json.dump(info, f, indent=2, sort_keys=True)
+    if getattr(wandb, "run", None) is None:
+        logging.getLogger(__name__).info("W&B run not active; skipping manifest upload.")
+        return
+
+    ts = datetime.datetime.now().strftime("%Y%m%dT%H%M%SZ")
+    artifact = wandb.Artifact(name="run-manifest", type="config")
+    with artifact.new_file(f"run_manifest_{ts}.json", mode="w") as f:
+        json.dump(info, f, indent=2, sort_keys=True, ensure_ascii=False)
+    wandb.run.log_artifact(artifact)
+    logging.getLogger(__name__).info("Logged run manifest to W&B (artifact=run-manifest).")
 
 
 def system_info(info: dict[str, Any] | None = None) -> dict:

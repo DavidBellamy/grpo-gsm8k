@@ -13,12 +13,15 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import hydra
 import wandb
 from omegaconf import DictConfig, OmegaConf
+
+from grpo_gsm8k.utils.repro import write_run_manifest
 
 
 def _setup_logging(run_dir: Path, level: int = logging.INFO) -> Path:
@@ -54,6 +57,19 @@ def _flatten_dict(d: Mapping[str, Any], parent_key: str = "", sep: str = ".") ->
     return items
 
 
+def _log_hydra_config_artifact(run: Any, cfg: DictConfig, _run_dir: Path) -> None:
+    """Serialize Hydra config to YAML and log as a W&B artifact."""
+    ts = datetime.now().strftime("%Y%m%dT%H%M%SZ")
+    yaml_text = OmegaConf.to_yaml(cfg)
+
+    artifact = wandb.Artifact(name="hydra-config", type="config")
+    # Write directly into the artifact's staging area (no project-local file)
+    with artifact.new_file(f"hydra_config_{ts}.yaml", mode="w") as f:
+        f.write(yaml_text)
+    run.log_artifact(artifact)
+    logging.getLogger(__name__).info("Logged Hydra config YAML to W&B artifact")
+
+
 @hydra.main(config_path="../conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     # Hydra changes the working directory to its run dir. Log within that directory.
@@ -80,6 +96,9 @@ def main(cfg: DictConfig) -> None:
     wb_config = _flatten_dict(cfg_dict)
 
     run = wandb.init(project=project, name=run_name, entity=entity, config=wb_config)
+    _log_hydra_config_artifact(run, cfg, Path("."))
+    write_run_manifest(extras={"command": command})
+
     try:
         if command == "eval":
             from grpo_gsm8k.evaluation.eval import main as eval_main
