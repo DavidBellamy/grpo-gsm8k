@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
 import math
@@ -650,6 +651,94 @@ def main(
                         ),
                     }
                 )
+
+                # --- W&B Table: GSM8k Test Results (append across runs via artifact) ---
+                def _fmt_ci(mean: float, lo: float, hi: float, prec: int = 3) -> str:
+                    return f"{mean:.{prec}f} ({lo:.{prec}f}, {hi:.{prec}f})"
+
+                cols = [
+                    "Model ID",
+                    "pass@1",
+                    "format error rate",
+                    "logic error rate",
+                    "truncation rate",
+                    "length (p50)",
+                    "length (p95)",
+                ]
+
+                row = [
+                    model_path,
+                    _fmt_ci(
+                        gsm8k_results["gsm8k_pass@1"],
+                        gsm8k_results["gsm8k_pass@1_ci_lower"],
+                        gsm8k_results["gsm8k_pass@1_ci_upper"],
+                    ),
+                    _fmt_ci(
+                        gsm8k_results["gsm8k_format_error_rate"],
+                        gsm8k_results["gsm8k_format_error_rate_ci_lower"],
+                        gsm8k_results["gsm8k_format_error_rate_ci_upper"],
+                    ),
+                    _fmt_ci(
+                        gsm8k_results["gsm8k_logic_error_rate"],
+                        gsm8k_results["gsm8k_logic_error_rate_ci_lower"],
+                        gsm8k_results["gsm8k_logic_error_rate_ci_upper"],
+                    ),
+                    _fmt_ci(
+                        gsm8k_results["gsm8k_truncation_rate"],
+                        gsm8k_results["gsm8k_truncation_rate_ci_lower"],
+                        gsm8k_results["gsm8k_truncation_rate_ci_upper"],
+                    ),
+                    _fmt_ci(
+                        float(gsm8k_results["gsm8k_completion_len_p50"]),
+                        float(gsm8k_results["gsm8k_completion_len_p50_ci_lower"]),
+                        float(gsm8k_results["gsm8k_completion_len_p50_ci_upper"]),
+                    ),
+                    _fmt_ci(
+                        float(gsm8k_results["gsm8k_completion_len_p95"]),
+                        float(gsm8k_results["gsm8k_completion_len_p95_ci_lower"]),
+                        float(gsm8k_results["gsm8k_completion_len_p95_ci_upper"]),
+                    ),
+                ]
+
+                # Load latest artifact table if it exists, append row, and version it
+                table_art_name = "gsm8k-test-results"
+                table_filename = "gsm8k_test_results.csv"
+                csv_rows: list[list[str]] = []
+
+                try:
+                    api = wandb.Api()
+                    latest_ref = f"{run.entity}/{run.project}/{table_art_name}:latest"
+                    art = api.artifact(latest_ref)
+                    dl_dir = Path(art.download())
+                    prior_csv = dl_dir / table_filename
+                    if prior_csv.exists():
+                        with prior_csv.open(newline="", encoding="utf-8") as f:
+                            reader = csv.reader(f)
+                            csv_rows = [r for r in reader]
+                except Exception:
+                    # No prior artifact found or fetch failed; start fresh
+                    csv_rows = []
+
+                # Ensure header
+                if not csv_rows or csv_rows[0] != cols:
+                    csv_rows = [cols] + [row]
+                else:
+                    csv_rows.append(row)
+
+                # Write updated CSV locally
+                table_path = output_path / table_filename
+                with table_path.open("w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerows(csv_rows)
+
+                # Log artifact with alias "latest" so next run can append
+                table_artifact = wandb.Artifact(table_art_name, type="evaluation-table")
+                table_artifact.add_file(str(table_path))
+                run.log_artifact(table_artifact, aliases=["latest"])
+
+                # Also log a W&B Table in this run for visualization
+                wb_table = wandb.Table(columns=cols, data=csv_rows[1:])
+                wandb.log({"GSM8k Test Results": wb_table})
 
             # Run lm-eval benchmarks if requested
             if run_lm_eval_suites:

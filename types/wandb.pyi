@@ -30,10 +30,20 @@ class Run:
     name: str
     id: str
     project: str
+    entity: str
     summary: MutableMapping[str, Any]
     def log(self, metrics: dict[str, float], step: int | None = None) -> None: ...
-    def log_artifact(self, artifact: Artifact) -> None: ...
+    def log_artifact(
+        self,
+        artifact: Artifact,
+        *,
+        aliases: Sequence[str] | None = None,
+    ) -> None: ...
     def finish(self) -> None: ...
+
+class Api:
+    def __init__(self, *args: Any, **kwargs: Any) -> None: ...
+    def artifact(self, name: str, type: str | None = None, **kwargs: Any) -> Any: ...
 
 # Global handle to the current run (wandb.run)
 run: Run | None
