@@ -145,7 +145,7 @@ def compute_bootstrap_ci_binary(
     alpha: float = 0.05,
     seed: int | None = None,
 ) -> dict[str, float]:
-    """Bootstrap CI for pass@1 over binary rewards."""
+    """Bootstrap CI for binary sequences."""
     n = len(values)
     if n == 0:
         return {"mean": 0.0, "std": 0.0, "ci_lower": 0.0, "ci_upper": 0.0}
@@ -160,6 +160,39 @@ def compute_bootstrap_ci_binary(
     std = math.sqrt(var)
     lower = _percentile(means, alpha / 2)
     upper = _percentile(means, 1 - alpha / 2)
+    return {
+        "mean": float(mean_obs),
+        "std": float(std),
+        "ci_lower": float(lower),
+        "ci_upper": float(upper),
+    }
+
+
+def compute_bootstrap_ci_percentile(
+    values: list[float],
+    q: float,
+    n_boot: int = 1000,
+    alpha: float = 0.05,
+    seed: int | None = None,
+) -> dict[str, float]:
+    """
+    Bootstrap CI for a percentile (e.g., p50/p95).
+    Returns dict with keys: mean, std, ci_lower, ci_upper.
+    """
+    n = len(values)
+    if n == 0:
+        return {"mean": 0.0, "std": 0.0, "ci_lower": 0.0, "ci_upper": 0.0}
+    rng = random.Random(seed)
+    stats: list[float] = []
+    for _ in range(n_boot):
+        sample = [values[rng.randrange(n)] for _ in range(n)]
+        stats.append(_percentile(sample, q))
+    mean_obs = _percentile(values, q)
+    mu = sum(stats) / len(stats)
+    var = sum((x - mu) ** 2 for x in stats) / (len(stats) - 1) if len(stats) > 1 else 0.0
+    std = math.sqrt(var)
+    lower = _percentile(stats, alpha / 2)
+    upper = _percentile(stats, 1 - alpha / 2)
     return {
         "mean": float(mean_obs),
         "std": float(std),
@@ -353,6 +386,53 @@ def run_gsm8k_eval(
     fmt_err_rate = (format_error_count / non_truncated_count) if non_truncated_count else 0.0
     logic_err_rate = (logic_error_count / non_truncated_count) if non_truncated_count else 0.0
 
+    # --- Bootstrap CIs for additional GSM8K metrics ---
+    if comp_lens:
+        p50_ci = compute_bootstrap_ci_percentile(
+            [float(x) for x in comp_lens],
+            q=0.5,
+            n_boot=bootstrap_samples,
+            alpha=ci_alpha,
+        )
+        p95_ci = compute_bootstrap_ci_percentile(
+            [float(x) for x in comp_lens],
+            q=0.95,
+            n_boot=bootstrap_samples,
+            alpha=ci_alpha,
+        )
+    else:
+        p50_ci = {"ci_lower": 0.0, "ci_upper": 0.0}
+        p95_ci = {"ci_lower": 0.0, "ci_upper": 0.0}
+
+    # Truncation rate CI (binary)
+    if results:
+        trunc_flags = [1 if r["is_truncated"] else 0 for r in results]
+        trunc_ci = compute_bootstrap_ci_binary(
+            trunc_flags, n_boot=bootstrap_samples, alpha=ci_alpha
+        )
+    else:
+        trunc_ci = {"ci_lower": 0.0, "ci_upper": 0.0}
+
+    # Format/logical error rate CIs over non-truncated examples (binary)
+    if non_truncated_count:
+        fmt_flags = [
+            1 if ((int(r["reward"]) == 0) and (not r["formatting_ok"])) else 0
+            for r in results
+            if not r["is_truncated"]
+        ]
+        logic_flags = [
+            1 if ((int(r["reward"]) == 0) and r["formatting_ok"]) else 0
+            for r in results
+            if not r["is_truncated"]
+        ]
+        fmt_ci = compute_bootstrap_ci_binary(fmt_flags, n_boot=bootstrap_samples, alpha=ci_alpha)
+        logic_ci = compute_bootstrap_ci_binary(
+            logic_flags, n_boot=bootstrap_samples, alpha=ci_alpha
+        )
+    else:
+        fmt_ci = {"ci_lower": 0.0, "ci_upper": 0.0}
+        logic_ci = {"ci_lower": 0.0, "ci_upper": 0.0}
+
     return {
         "gsm8k_pass@1": pass_at_1,
         "gsm8k_n_examples": len(results),
@@ -364,6 +444,16 @@ def run_gsm8k_eval(
         "gsm8k_truncation_rate": trunc_rate,
         "gsm8k_format_error_rate": fmt_err_rate,
         "gsm8k_logic_error_rate": logic_err_rate,
+        "gsm8k_completion_len_p50_ci_lower": p50_ci["ci_lower"],
+        "gsm8k_completion_len_p50_ci_upper": p50_ci["ci_upper"],
+        "gsm8k_completion_len_p95_ci_lower": p95_ci["ci_lower"],
+        "gsm8k_completion_len_p95_ci_upper": p95_ci["ci_upper"],
+        "gsm8k_truncation_rate_ci_lower": trunc_ci["ci_lower"],
+        "gsm8k_truncation_rate_ci_upper": trunc_ci["ci_upper"],
+        "gsm8k_format_error_rate_ci_lower": fmt_ci["ci_lower"],
+        "gsm8k_format_error_rate_ci_upper": fmt_ci["ci_upper"],
+        "gsm8k_logic_error_rate_ci_lower": logic_ci["ci_lower"],
+        "gsm8k_logic_error_rate_ci_upper": logic_ci["ci_upper"],
     }
 
 
@@ -527,6 +617,36 @@ def main(
                         ),
                         "metrics/gsm8k_logic_error_rate": gsm8k_results.get(
                             "gsm8k_logic_error_rate", 0.0
+                        ),
+                        "metrics/gsm8k_completion_len_p50_ci_lower": gsm8k_results.get(
+                            "gsm8k_completion_len_p50_ci_lower", 0.0
+                        ),
+                        "metrics/gsm8k_completion_len_p50_ci_upper": gsm8k_results.get(
+                            "gsm8k_completion_len_p50_ci_upper", 0.0
+                        ),
+                        "metrics/gsm8k_completion_len_p95_ci_lower": gsm8k_results.get(
+                            "gsm8k_completion_len_p95_ci_lower", 0.0
+                        ),
+                        "metrics/gsm8k_completion_len_p95_ci_upper": gsm8k_results.get(
+                            "gsm8k_completion_len_p95_ci_upper", 0.0
+                        ),
+                        "metrics/gsm8k_truncation_rate_ci_lower": gsm8k_results.get(
+                            "gsm8k_truncation_rate_ci_lower", 0.0
+                        ),
+                        "metrics/gsm8k_truncation_rate_ci_upper": gsm8k_results.get(
+                            "gsm8k_truncation_rate_ci_upper", 0.0
+                        ),
+                        "metrics/gsm8k_format_error_rate_ci_lower": gsm8k_results.get(
+                            "gsm8k_format_error_rate_ci_lower", 0.0
+                        ),
+                        "metrics/gsm8k_format_error_rate_ci_upper": gsm8k_results.get(
+                            "gsm8k_format_error_rate_ci_upper", 0.0
+                        ),
+                        "metrics/gsm8k_logic_error_rate_ci_lower": gsm8k_results.get(
+                            "gsm8k_logic_error_rate_ci_lower", 0.0
+                        ),
+                        "metrics/gsm8k_logic_error_rate_ci_upper": gsm8k_results.get(
+                            "gsm8k_logic_error_rate_ci_upper", 0.0
                         ),
                     }
                 )
@@ -775,7 +895,7 @@ if __name__ == "__main__":
         "--gsm8k_bootstrap_samples",
         type=int,
         default=10,
-        help="Number of bootstrap resamples for CI over GSM8K pass@1",
+        help="Number of bootstrap resamples for CI over GSM8K metrics",
     )
     parser.add_argument(
         "--gsm8k_ci_alpha",
