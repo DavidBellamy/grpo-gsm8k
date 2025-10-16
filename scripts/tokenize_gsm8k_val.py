@@ -29,7 +29,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Prepare val set prompts for vLLM eval.")
     ap.add_argument("--infile", type=Path, default=Path("artifacts/gsm8k/val.jsonl"))
     ap.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Math-1.5B")
-    ap.add_argument("--outfile", type=Path, default=Path("artifacts/tokenized/val_for_vllm.jsonl"))
+    ap.add_argument("--outfile", type=Path, default=Path("artifacts/tokenized/val_tokenized.jsonl"))
     args = ap.parse_args()
 
     rows = load_val_rows(args.infile)

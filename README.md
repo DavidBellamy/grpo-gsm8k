@@ -95,10 +95,10 @@ To evaluate Qwen checkpoints during SFT, you must pre-render the GSM8K validatio
 - Prepare the eval set:
 
 ```bash
-uv run python scripts/shell/prep_val_for_vllm.py \
+uv run python scripts/shell/tokenize_gsm8k_val.py \
   --model_id "Qwen/Qwen2.5-Math-1.5B" \
   --infile artifacts/gsm8k/val.jsonl \
-  --outfile artifacts/tokenized/val_for_vllm.jsonl
+  --outfile artifacts/tokenized/val_tokenized.jsonl
 ```
 
 - The output JSONL contains:
@@ -112,7 +112,7 @@ uv run python scripts/shell/prep_val_for_vllm.py \
 
 ## SFT with strict async vLLM evaluation
 
-During SFT, async vLLM evaluation is always enabled and strictly requires a pre-rendered eval set (`artifacts/tokenized/val_for_vllm.jsonl`). No fallback or disabling is allowed.
+During SFT, async vLLM evaluation is always enabled and strictly requires a pre-rendered eval set (`artifacts/tokenized/val_tokenized.jsonl`). No fallback or disabling is allowed.
 
 - Example SFT run:
 
@@ -121,7 +121,7 @@ python -m grpo_gsm8k.cli sft \
   --data_path artifacts/r1_sft_pairs.jsonl \
   --model_id Qwen/Qwen2.5-Math-1.5B \
   --vllm_device cuda:1 \
-  --eval_set_path artifacts/tokenized/val_for_vllm.jsonl \
+  --eval_set_path artifacts/tokenized/val_tokenized.jsonl \
   --eval_every 4 \
   --eval_examples 64
 ```

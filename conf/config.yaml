@@ -1,0 +1,15 @@
+defaults:
+  - sft: default
+  - eval: default
+  - _self_
+
+command: eval
+
+hydra:
+  job:
+    chdir: false
+  run:
+    dir: artifacts/runs/${now:%Y%m%dT%H%M%S}_${oc.env:GIT_SHA,local}
+  sweep:
+    dir: artifacts/sweeps
+    subdir: ${hydra.job.name}/${hydra.job.num}_${now:%Y%m%dT%H%M%S}_${oc.env:GIT_SHA,local}

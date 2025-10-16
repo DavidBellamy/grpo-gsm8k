@@ -35,6 +35,14 @@ from grpo_gsm8k.evaluation.reward_fn import extract_answer_colon, extract_boxed,
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_wandb_component(name: str) -> str:
+    """
+    W&B treats '/' as a namespace separator. Replace with a lookalike Unicode slash
+    to keep a single section while remaining readable.
+    """
+    return name.replace("/", "∕")
+
+
 # -----------------------------
 # Training primitives
 # -----------------------------
@@ -449,9 +457,9 @@ def pad_collate(batch: list[dict], pad_id: int) -> dict[str, torch.Tensor]:
     }
 
 
-def _load_prerendered_eval_set(path: str | Path) -> tuple[list[str], list[str], list[str]]:
+def _load_prerendered_val_set(path: str | Path) -> tuple[list[str], list[str], list[str]]:
     """
-    Strict loader for pre-rendered eval sets (JSONL) for vLLM eval.
+    Strict loader for pre-rendered val set (JSONL) for vLLM eval.
     Requires each row to have:
       - "prompt": chat-rendered string
       - "gold": original gold answer string (for logging)
@@ -470,21 +478,21 @@ def _load_prerendered_eval_set(path: str | Path) -> tuple[list[str], list[str], 
             obj = json.loads(line)
             if "prompt" not in obj or "gold" not in obj or "gold_num" not in obj:
                 raise ValueError(
-                    f"Eval row {i} missing required keys. Expected 'prompt','gold','gold_num'."
+                    f"Val row {i} missing required keys. Expected 'prompt','gold','gold_num'."
                 )
             prompt = str(obj["prompt"])
             gold = str(obj["gold"])
             gold_num_raw = obj["gold_num"]
             if gold_num_raw is None:
-                raise ValueError(f"Eval row {i} has null gold_num")
+                raise ValueError(f"Val row {i} has null gold_num")
             gold_num = str(gold_num_raw)
             if gold_num == "":
-                raise ValueError(f"Eval row {i} has empty gold_num (no on-the-fly parsing allowed)")
+                raise ValueError(f"Val row {i} has empty gold_num (no on-the-fly parsing allowed)")
             prompts.append(prompt)
             gold_strs.append(gold)
             gold_nums.append(gold_num)
     if not prompts:
-        raise ValueError(f"No eval examples loaded from {path}")
+        raise ValueError(f"No val examples loaded from {path}")
     return prompts, gold_strs, gold_nums
 
 
@@ -569,7 +577,7 @@ def _ngram_repetition_ratio(token_ids: list[int], n: int = 3) -> float:
 
 def train_sft_on_r1_pairs(
     train_data_path: str | Path,
-    eval_data_path: str | Path | None = None,
+    val_data_path: str | Path | None = None,
     *,
     model_id: str = "Qwen/Qwen2.5-Math-1.5B",
     device: str | torch.device = "cuda:0",
@@ -611,9 +619,12 @@ def train_sft_on_r1_pairs(
     """
     # Decouple steps across train and eval so async work doesn't break monotonicity
     wandb.define_metric("steps/train_step")
-    wandb.define_metric("train/*", step_metric="steps/train_step")
-    wandb.define_metric("steps/eval_step")
-    wandb.define_metric("eval/*", step_metric="steps/eval_step")
+    sanitized_model = _sanitize_wandb_component(model_id)
+    train_title = f"{sanitized_model}-sft-train"
+    wandb.define_metric(train_title + "/*", step_metric="steps/train_step")
+    wandb.define_metric("steps/val_step")
+    val_title = f"{sanitized_model}-sft-val"
+    wandb.define_metric(val_title + "/*", step_metric="steps/val_step")
 
     # Resolve device
     if isinstance(device, str):
@@ -659,19 +670,19 @@ def train_sft_on_r1_pairs(
     eval_gold_strs: list[str] = []
     eval_gold_nums: list[str] = []
     if eval_every:
-        if eval_data_path is None:
+        if val_data_path is None:
             raise ValueError(
-                "eval_every=%d but eval_data_path is not provided.",
+                "eval_every=%d but val_data_path is not provided.",
                 eval_every,
             )
         else:
-            eval_prompts_chat, eval_gold_strs, eval_gold_nums = _load_prerendered_eval_set(
-                eval_data_path
+            eval_prompts_chat, eval_gold_strs, eval_gold_nums = _load_prerendered_val_set(
+                val_data_path
             )
             logger.info(
                 "Loaded pre-rendered eval set for vLLM: n=%d from %s",
                 len(eval_prompts_chat),
-                eval_data_path,
+                val_data_path,
             )
 
     # Start persistent vLLM worker on separate GPU
@@ -776,7 +787,7 @@ def train_sft_on_r1_pairs(
 
     # --- Single persistent W&B table that we update once per eval step ---
     eval_table_cols: list[str] = [
-        "eval_step",
+        "val_step",
         "prompt",
         "gold_reasoning",
         "model_response",
@@ -891,15 +902,17 @@ def train_sft_on_r1_pairs(
 
                         result_step = int(result.get("step", update_step))
                         metrics = {
-                            "steps/eval_step": int(result_step),
-                            "eval/avg_response_length": float(
+                            "steps/val_step": int(result_step),
+                            f"{val_title}/avg_response_length": float(
                                 result.get("avg_response_length", 0.0)
                             ),
-                            "eval/accuracy": float(result.get("accuracy", 0.0)),
-                            "eval/truncation_rate": float(result.get("truncation_rate", 0.0)),
-                            "eval/length_p50": float(result.get("length_p50", 0.0)),
-                            "eval/length_p95": float(result.get("length_p95", 0.0)),
-                            "eval/toks_per_sec": float(result.get("toks_per_sec", 0.0)),
+                            f"{val_title}/accuracy": float(result.get("accuracy", 0.0)),
+                            f"{val_title}/truncation_rate": float(
+                                result.get("truncation_rate", 0.0)
+                            ),
+                            f"{val_title}/length_p50": float(result.get("length_p50", 0.0)),
+                            f"{val_title}/length_p95": float(result.get("length_p95", 0.0)),
+                            f"{val_title}/toks_per_sec": float(result.get("toks_per_sec", 0.0)),
                         }
 
                         lps = [
@@ -916,11 +929,15 @@ def train_sft_on_r1_pairs(
                             x for x in result.get("rep3_ratios", []) if x == x and not math.isinf(x)
                         ]
                         if lps:
-                            metrics["eval/mean_gen_token_logprob"] = float(sum(lps) / len(lps))
+                            metrics[f"{val_title}/mean_gen_token_logprob"] = float(
+                                sum(lps) / len(lps)
+                            )
                         if ppls:
-                            metrics["eval/mean_gen_perplexity"] = float(sum(ppls) / len(ppls))
+                            metrics[f"{val_title}/mean_gen_perplexity"] = float(
+                                sum(ppls) / len(ppls)
+                            )
                         if reps:
-                            metrics["eval/mean_rep3_ratio"] = float(sum(reps) / len(reps))
+                            metrics[f"{val_title}/mean_rep3_ratio"] = float(sum(reps) / len(reps))
                         wandb.log(metrics)
 
                         # Add eval examples to persistent table
@@ -941,7 +958,7 @@ def train_sft_on_r1_pairs(
                             except Exception as e:
                                 logger.warning("Failed to add eval row j=%d: %s", j, e)
                         if wandb.run is not None:
-                            wandb.run.log({"eval/examples": eval_table})  # type: ignore[dict-item]
+                            wandb.run.log({f"{val_title}/examples": eval_table})  # type: ignore[dict-item]
 
                 # Early stop if update limit reached (will flush below if needed)
                 if max_update_steps is not None and update_step >= max_update_steps:
@@ -1022,17 +1039,17 @@ def train_sft_on_r1_pairs(
                 wandb.log(
                     {
                         "steps/train_step": int(update_step),
-                        "train/pct_pad_per_macrobatch": float(pct_pad_per_macrobatch),
-                        "train/tokens_per_sec_response": float(tps_response),
-                        "train/tokens_per_sec_nonpad": float(tps_nonpad),
-                        "train/avg_response_token_logprob": float(avg_lp_update),
-                        "train/avg_response_token_nll": float(avg_nll_update),
-                        "train/mean_entropy_response": float(mean_resp_entropy_update),
-                        "train/mean_perplexity_response": float(mean_ppl_update),
-                        "train/response_tokens_update": float(tokens_since_update),
-                        "train/global_grad_l2_preclip": float(global_grad_l2_preclip),
-                        "train/global_grad_l2_postclip": float(global_grad_l2_postclip),
-                        "train/lr": float(current_lr),
+                        f"{train_title}/pct_pad_per_macrobatch": float(pct_pad_per_macrobatch),
+                        f"{train_title}/tokens_per_sec_response": float(tps_response),
+                        f"{train_title}/tokens_per_sec_nonpad": float(tps_nonpad),
+                        f"{train_title}/avg_response_token_logprob": float(avg_lp_update),
+                        f"{train_title}/avg_response_token_nll": float(avg_nll_update),
+                        f"{train_title}/mean_entropy_response": float(mean_resp_entropy_update),
+                        f"{train_title}/mean_perplexity_response": float(mean_ppl_update),
+                        f"{train_title}/response_tokens_update": float(tokens_since_update),
+                        f"{train_title}/global_grad_l2_preclip": float(global_grad_l2_preclip),
+                        f"{train_title}/global_grad_l2_postclip": float(global_grad_l2_postclip),
+                        f"{train_title}/lr": float(current_lr),
                     },
                 )
 
@@ -1134,13 +1151,15 @@ def train_sft_on_r1_pairs(
 
                     result_step = int(result.get("step", update_step))
                     metrics = {
-                        "steps/eval_step": int(result_step),
-                        "eval/avg_response_length": float(result.get("avg_response_length", 0.0)),
-                        "eval/accuracy": float(result.get("accuracy", 0.0)),
-                        "eval/truncation_rate": float(result.get("truncation_rate", 0.0)),
-                        "eval/length_p50": float(result.get("length_p50", 0.0)),
-                        "eval/length_p95": float(result.get("length_p95", 0.0)),
-                        "eval/toks_per_sec": float(result.get("toks_per_sec", 0.0)),
+                        "steps/val_step": int(result_step),
+                        f"{val_title}/avg_response_length": float(
+                            result.get("avg_response_length", 0.0)
+                        ),
+                        f"{val_title}/accuracy": float(result.get("accuracy", 0.0)),
+                        f"{val_title}/truncation_rate": float(result.get("truncation_rate", 0.0)),
+                        f"{val_title}/length_p50": float(result.get("length_p50", 0.0)),
+                        f"{val_title}/length_p95": float(result.get("length_p95", 0.0)),
+                        f"{val_title}/toks_per_sec": float(result.get("toks_per_sec", 0.0)),
                     }
 
                     lps = [
@@ -1155,11 +1174,11 @@ def train_sft_on_r1_pairs(
                         x for x in result.get("rep3_ratios", []) if x == x and not math.isinf(x)
                     ]
                     if lps:
-                        metrics["eval/mean_gen_token_logprob"] = float(sum(lps) / len(lps))
+                        metrics[f"{val_title}/mean_gen_token_logprob"] = float(sum(lps) / len(lps))
                     if ppls:
-                        metrics["eval/mean_gen_perplexity"] = float(sum(ppls) / len(ppls))
+                        metrics[f"{val_title}/mean_gen_perplexity"] = float(sum(ppls) / len(ppls))
                     if reps:
-                        metrics["eval/mean_rep3_ratio"] = float(sum(reps) / len(reps))
+                        metrics[f"{val_title}/mean_rep3_ratio"] = float(sum(reps) / len(reps))
                     wandb.log(metrics)
 
                     # Add final eval examples to persistent table
@@ -1180,7 +1199,7 @@ def train_sft_on_r1_pairs(
                         except Exception as e:
                             logging.warning("Failed to add eval row j=%d: %s", j, e)
                     if wandb.run is not None:
-                        wandb.run.log({"eval/examples": eval_table})  # type: ignore[dict-item]
+                        wandb.run.log({f"{val_title}/examples": eval_table})  # type: ignore[dict-item]
 
             # Tell the worker to exit once we're done waiting
             try:

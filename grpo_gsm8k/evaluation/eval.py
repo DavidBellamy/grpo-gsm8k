@@ -497,9 +497,7 @@ def main(
     model_path: str = "Qwen/Qwen2.5-Math-1.5B",
     eval_suites: list[str] | None = None,
     limit: int | None = None,
-    wandb_project: str = "grpo-gsm8k",
-    run_name: str | None = None,
-    output_dir: str = "./artifacts/unified_eval",
+    output_dir: str = "./artifacts/eval",
     # GSM8K specific args
     gsm8k_eval_path: str = "artifacts/gsm8k/test.jsonl",
     gsm8k_max_tokens: int = 1024,
@@ -515,7 +513,7 @@ def main(
     tp_size: int = 1,
     gpu_mem_util: float = 0.92,
 ) -> dict[str, Any]:
-    """Run unified evaluation suite with shared vLLM server."""
+    """Run evaluation suite with shared vLLM server."""
 
     # Default eval suites
     if eval_suites is None:
@@ -541,7 +539,6 @@ def main(
     tokenizer_path = model_path
     if is_local_checkpoint:
         logger.info(f"Using local checkpoint: {model_path}")
-        model_display_name = model_path_obj.name
 
         # Try to find base model info for tokenizer
         config_file = model_path_obj / "config.json"
@@ -566,7 +563,6 @@ def main(
 
     else:
         logger.info(f"Using HuggingFace model: {model_path}")
-        model_display_name = model_path
 
     # Log evaluation configuration
     logger.info("Evaluation configuration:")
@@ -574,27 +570,6 @@ def main(
     logger.info(f"  Tokenizer: {tokenizer_path}")
     logger.info(f"  Eval suites: {eval_suites}")
     logger.info(f"  Limit: {limit}")
-
-    # Initialize W&B
-    config = {
-        "model_path": model_path,
-        "tokenizer_path": tokenizer_path,
-        "is_local_checkpoint": is_local_checkpoint,
-        "eval_suites": eval_suites,
-        "limit": limit,
-        "gsm8k_k_shot": gsm8k_k_shot,
-        "gsm8k_bootstrap_samples": gsm8k_bootstrap_samples,
-        "gsm8k_ci_alpha": gsm8k_ci_alpha,
-        "lm_eval_fewshot": lm_eval_fewshot,
-        "tp_size": tp_size,
-        "gpu_mem_util": gpu_mem_util,
-    }
-
-    run = wandb.init(
-        project=wandb_project,
-        name=run_name or f"unified_eval_{model_display_name}",
-        config=config,
-    )
 
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -742,7 +717,7 @@ def main(
 
                 try:
                     api = wandb.Api()
-                    latest_ref = f"{run.entity}/{run.project}/{table_art_name}:latest"
+                    latest_ref = f"{wandb.run.entity}/{wandb.run.project}/{table_art_name}:latest"
                     art = api.artifact(latest_ref)
                     dl_dir = Path(art.download())
                     prior_csv = dl_dir / table_filename
@@ -779,7 +754,7 @@ def main(
                 # Log artifact with alias "latest" so next run can update in place
                 table_artifact = wandb.Artifact(table_art_name, type="evaluation-table")
                 table_artifact.add_file(str(table_path))
-                run.log_artifact(table_artifact, aliases=["latest"])
+                wandb.run.log_artifact(table_artifact, aliases=["latest"])
 
                 # Also log a W&B Table in this run for visualization
                 wb_table = wandb.Table(columns=cols, data=csv_rows[1:])
@@ -816,7 +791,7 @@ def main(
                 completions_table = wandb.Table(columns=comp_cols, data=comp_rows)
                 table_key = f"Model Completions on GSM8k Test Set for {model_path}"
                 # Put into run.summary to overwrite on subsequent writes within the same run
-                run.summary[table_key] = completions_table
+                wandb.run.summary[table_key] = completions_table
 
             # Run lm-eval benchmarks if requested
             if run_lm_eval_suites:
@@ -856,22 +831,108 @@ def main(
                         if to_log:
                             wandb.log(to_log)
 
-        # Save unified results
-        results_file = output_path / "unified_results.json"
+                    # --- W&B Table: lm-eval results (append across runs via artifact) ---
+                    def _metric_or_empty(task: str, metric_keys: list[str]) -> str:
+                        v: Any = None
+                        task_dict = lm_eval_results.get(task, {})
+                        if isinstance(task_dict, dict):
+                            for mk in metric_keys:
+                                if mk in task_dict and isinstance(task_dict[mk], int | float):
+                                    v = task_dict[mk]
+                                    break
+                        return f"{float(v):.4f}" if isinstance(v, int | float) else ""
+
+                    lm_cols: list[str] = [
+                        "Model ID",
+                        "mmlu pass@1",
+                        "MATH pass@1",
+                        "arc-challenge pass@1",
+                        "hellaswag pass@1",
+                        "truthfulqa pass@1",
+                        "winogrande pass@1",
+                        "wikitext bits-per-byte",
+                    ]
+
+                    # Fallbacks cover slight metric-name variations across lm-eval versions
+                    row_values: list[str] = [
+                        model_path,
+                        _metric_or_empty("mmlu", ["acc,none", "acc"]),
+                        _metric_or_empty("hendrycks_math", ["exact_match,none", "exact_match"]),
+                        _metric_or_empty("arc_challenge", ["acc_norm,none", "acc_norm"]),
+                        _metric_or_empty("hellaswag", ["acc_norm,none", "acc_norm"]),
+                        _metric_or_empty("truthfulqa_mc2", ["acc,none", "acc"]),
+                        _metric_or_empty("winogrande", ["acc,none", "acc"]),
+                        _metric_or_empty(
+                            "wikitext", ["bits_per_byte,none", "bits_per_byte", "bpb,none", "bpb"]
+                        ),
+                    ]
+
+                    lm_table_art_name = "lm-eval-results"
+                    lm_table_filename = "lm_eval_results.csv"
+                    lm_csv_rows: list[list[str]] = []
+
+                    try:
+                        api = wandb.Api()
+                        latest_ref = (
+                            f"{wandb.run.entity}/{wandb.run.project}/{lm_table_art_name}:latest"
+                        )
+                        art = api.artifact(latest_ref)
+                        dl_dir = Path(art.download())
+                        prior_csv = dl_dir / lm_table_filename
+                        if prior_csv.exists():
+                            with prior_csv.open(newline="", encoding="utf-8") as f:
+                                reader = csv.reader(f)
+                                lm_csv_rows = [r for r in reader]
+                    except Exception:
+                        lm_csv_rows = []
+
+                    # Ensure header and overwrite row for the same model_id if present
+                    if not lm_csv_rows or lm_csv_rows[0] != lm_cols:
+                        lm_csv_rows = [lm_cols, row_values]
+                    else:
+                        header = lm_csv_rows[0]
+                        existing_rows = lm_csv_rows[1:]
+                        replaced = False
+                        for idx, r in enumerate(existing_rows):
+                            if r and r[0] == model_path:  # Model ID column
+                                existing_rows[idx] = row_values
+                                replaced = True
+                                break
+                        if not replaced:
+                            existing_rows.append(row_values)
+                        lm_csv_rows = [header] + existing_rows
+
+                    # Write updated CSV locally
+                    lm_table_path = output_path / lm_table_filename
+                    with lm_table_path.open("w", newline="", encoding="utf-8") as f:
+                        writer = csv.writer(f)
+                        writer.writerows(lm_csv_rows)
+
+                    # Log artifact with alias "latest" so next run can update in place
+                    lm_table_artifact = wandb.Artifact(lm_table_art_name, type="evaluation-table")
+                    lm_table_artifact.add_file(str(lm_table_path))
+                    wandb.run.log_artifact(lm_table_artifact, aliases=["latest"])
+
+                    # Also log a W&B Table in this run for visualization
+                    lm_wb_table = wandb.Table(columns=lm_cols, data=lm_csv_rows[1:])
+                    wandb.log({"lm-eval results": lm_wb_table})
+
+        # Save results
+        results_file = output_path / "results.json"
         with results_file.open("w", encoding="utf-8") as f:
             json.dump(all_results, f, indent=2)
 
-        logger.info(f"Saved unified results to {results_file}")
+        logger.info(f"Saved results to {results_file}")
 
         # Create W&B artifact
-        artifact = wandb.Artifact("unified-eval", type="evaluation")
+        artifact = wandb.Artifact("eval", type="evaluation")
         artifact.add_file(str(results_file))
-        run.log_artifact(artifact)
+        wandb.run.log_artifact(artifact)
 
         return all_results
 
     finally:
-        run.finish()
+        wandb.run.finish()
 
 
 def run_lm_eval(
@@ -1031,7 +1092,7 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(
-        description="Unified evaluation suite for GSM8K and lm-eval benchmarks"
+        description="Evaluation suite for GSM8K and lm-eval benchmarks"
     )
 
     # Model and output args
@@ -1048,7 +1109,7 @@ if __name__ == "__main__":
         help="Evaluation suites to run: 'all', 'gsm8k', 'lm_eval', or specific task names",
     )
     parser.add_argument("--limit", type=int, help="Limit number of examples per evaluation")
-    parser.add_argument("--output_dir", type=str, default="./artifacts/unified_eval")
+    parser.add_argument("--output_dir", type=str, default="./artifacts/eval")
 
     # W&B args
     parser.add_argument("--wandb_project", type=str, default="grpo-gsm8k")

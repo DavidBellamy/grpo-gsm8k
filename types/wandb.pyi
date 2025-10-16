@@ -46,7 +46,7 @@ class Api:
     def artifact(self, name: str, type: str | None = None, **kwargs: Any) -> Any: ...
 
 # Global handle to the current run (wandb.run)
-run: Run | None
+run: Run  # made non-optional to satisfy attribute access in code
 
 def init(*args: Any, **kwargs: Any) -> Run: ...
 def log(
