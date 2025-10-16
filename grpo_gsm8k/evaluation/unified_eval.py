@@ -13,7 +13,7 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, cast
 
 import wandb
 from transformers import AutoTokenizer
@@ -243,6 +243,19 @@ def _parse_boxed_numeric(text: str) -> tuple[bool, float | None]:
     return False, None
 
 
+def _extract_gold_numeric_str(answer_text: str) -> str:
+    """
+    Return the text after '####', stripped and lightly normalized.
+    """
+    m = re.search(r"####\s*(.+)", answer_text)
+    if not m:
+        return ""
+    s = m.group(1).strip()
+    # Light normalization (remove dollar signs and commas)
+    s = s.replace("$", "").replace(",", "")
+    return s
+
+
 def run_gsm8k_eval(
     model_path: str,
     eval_path: str,
@@ -329,31 +342,53 @@ def run_gsm8k_eval(
         if finish_reason == "length":
             truncated_count += 1
 
-        reward = reward_from_text(output_text, data_item["answer"], "boxed")
+        reward_val = reward_from_text(output_text, data_item["answer"], "boxed")
+        # Ensure reward is 0/1 int for typing and downstream tables
+        try:
+            reward_int = int(round(float(reward_val)))
+        except Exception:
+            reward_int = 0
 
         # Determine formatting correctness from last \boxed{...}
         formatting_ok, _ = _parse_boxed_numeric(output_text)
         is_truncated = finish_reason == "length"
 
+        # Extract raw boxed content as "Model Answer" (if present)
+        boxed_matches = re.findall(r"\\boxed\s*\{([^}]*)\}", output_text, flags=re.DOTALL)
+        model_answer = ""
+        if boxed_matches:
+            # Preserve content but strip surrounding $ and trim whitespace
+            content = boxed_matches[-1].strip()
+            model_answer = content.replace("$", "").strip()
+
+        # Extract gold numeric answer from the gold field (text after '####')
+        gold_numeric_answer = _extract_gold_numeric_str(data_item["answer"])
+
         # Count error types only for non-truncated completions
         if not is_truncated:
             non_truncated_count += 1
-            if reward == 0:
+            if reward_val == 0:
                 if not formatting_ok:
                     format_error_count += 1
                 else:
                     logic_error_count += 1
+
+        # Per-example completion length in tokens
+        completion_len = len(tok.encode(output_text, add_special_tokens=False))
 
         results.append(
             {
                 "id": data_item.get("id", i),
                 "question": data_item["question"],
                 "output": output_text,
-                "reward": reward,
+                "reward": reward_int,
                 "gold": data_item["answer"],
                 "finish_reason": finish_reason,
                 "formatting_ok": formatting_ok,
                 "is_truncated": is_truncated,
+                "model_answer": model_answer,
+                "gold_numeric_answer": gold_numeric_answer,
+                "completion_len": completion_len,
             }
         )
 
@@ -719,11 +754,21 @@ def main(
                     # No prior artifact found or fetch failed; start fresh
                     csv_rows = []
 
-                # Ensure header
+                # Ensure header and overwrite row for the same model_id if present
                 if not csv_rows or csv_rows[0] != cols:
-                    csv_rows = [cols] + [row]
+                    csv_rows = [cols, row]
                 else:
-                    csv_rows.append(row)
+                    header = csv_rows[0]
+                    existing_rows = csv_rows[1:]
+                    replaced = False
+                    for idx, r in enumerate(existing_rows):
+                        if r and r[0] == model_path:  # Model ID column
+                            existing_rows[idx] = row
+                            replaced = True
+                            break
+                    if not replaced:
+                        existing_rows.append(row)
+                    csv_rows = [header] + existing_rows
 
                 # Write updated CSV locally
                 table_path = output_path / table_filename
@@ -731,7 +776,7 @@ def main(
                     writer = csv.writer(f)
                     writer.writerows(csv_rows)
 
-                # Log artifact with alias "latest" so next run can append
+                # Log artifact with alias "latest" so next run can update in place
                 table_artifact = wandb.Artifact(table_art_name, type="evaluation-table")
                 table_artifact.add_file(str(table_path))
                 run.log_artifact(table_artifact, aliases=["latest"])
@@ -739,6 +784,39 @@ def main(
                 # Also log a W&B Table in this run for visualization
                 wb_table = wandb.Table(columns=cols, data=csv_rows[1:])
                 wandb.log({"GSM8k Test Results": wb_table})
+
+                # Log full completions table (one row per prompt) and overwrite within run
+                comp_cols = [
+                    "Prompt",
+                    "Gold Reasoning",
+                    "Model Completion",
+                    "Model Answer",
+                    "Gold Answer",
+                    "Correct",
+                    "Completion Length",
+                    "Truncated",
+                    "Stop Reason",
+                ]
+                comp_rows: list[list[Any]] = []
+                examples = cast(list[dict[str, Any]], gsm8k_results.get("gsm8k_results", []))
+                for ex in examples:
+                    comp_rows.append(
+                        [
+                            ex.get("question", ""),
+                            ex.get("gold", ""),
+                            ex.get("output", ""),
+                            ex.get("model_answer", ""),
+                            ex.get("gold_numeric_answer", ""),
+                            int(ex.get("reward", 0)),
+                            int(ex.get("completion_len", 0)),
+                            int(1 if ex.get("is_truncated") else 0),
+                            str(ex.get("finish_reason") or ""),
+                        ]
+                    )
+                completions_table = wandb.Table(columns=comp_cols, data=comp_rows)
+                table_key = f"Model Completions on GSM8k Test Set for {model_path}"
+                # Put into run.summary to overwrite on subsequent writes within the same run
+                run.summary[table_key] = completions_table
 
             # Run lm-eval benchmarks if requested
             if run_lm_eval_suites:
