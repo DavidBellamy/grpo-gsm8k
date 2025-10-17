@@ -128,13 +128,12 @@ On the first pod you deploy, configure your git info:
 
 | Task | Command |
 |------|---------|
-| Install runtime | uv sync |
-| Install runtime + dev | uv sync --dev |
-| Editable install | uv pip  install -e . |
 | Run tests | pytest |
 | Lint | ruff check . |
 | Format | ruff format . |
 | Type-check | mypy grpo_gsm8k |
+
+Note: ruff and mypy are both run automatically as pre-commit hooks.
 
 ---
 
