@@ -1,0 +1,23 @@
+model_path: Qwen/Qwen2.5-Math-1.5B
+eval_suites: [all]
+limit: null
+output_dir: ./artifacts/eval
+
+gsm8k_eval_path: artifacts/gsm8k/test.jsonl
+gsm8k_max_tokens: 2048
+gsm8k_k_shot: 8
+
+lm_eval_tasks:
+  - hendrycks_math
+  - mmlu
+  - arc_challenge
+  - hellaswag
+  - winogrande
+  - truthfulqa_mc2
+  - wikitext
+lm_eval_fewshot: 4
+lm_eval_batch_size: 8
+lm_eval_max_tokens: 2048
+
+tp_size: 1
+gpu_mem_util: 0.92

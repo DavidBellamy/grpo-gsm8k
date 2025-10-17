@@ -1,0 +1,4 @@
+out_dir: artifacts/gsm8k
+eval_n: 512
+revision: main
+cache_dir: /workspace/.cache/huggingface

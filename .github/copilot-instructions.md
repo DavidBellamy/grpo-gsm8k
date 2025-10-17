@@ -4,7 +4,7 @@ Purpose: RL-style fine-tuning/evaluation scaffolding for math reasoning (GSM8K).
 
 ## Repo Map (what matters)
 - `grpo_gsm8k/cli.py`: End-to-end runs (sysinfo → data prep → vLLM eval → env lock/snapshot).
-- `grpo_gsm8k/fast_eval_vllm.py`: Baseline eval via vLLM (greedy, temp=0 by default).
+- `grpo_gsm8k/gsm8k_eval.py`: Baseline eval via vLLM (greedy, temp=0 by default).
 - `grpo_gsm8k/data_prep.py`: Fetch + pin GSM8K; write JSONL to `artifacts/gsm8k/`.
 - `grpo_gsm8k/prompts.py`: Qwen-style chat templates & batch render helpers.
 - `grpo_gsm8k/reward_fn.py`: Parse numeric answers and compute exact-match style rewards.

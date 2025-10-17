@@ -15,7 +15,7 @@ def main(
     eval_n: int = 512,
     revision: str = "main",
     cache_dir: str = "/workspace/.cache/huggingface",
-    make_hf_snapshot: bool = True,
+    make_hf_snapshot: bool = False,
     snapshot_dir: str = "artifacts/gsm8k_hf_snapshot",
 ) -> None:
     """

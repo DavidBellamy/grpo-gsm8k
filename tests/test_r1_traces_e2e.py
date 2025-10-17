@@ -78,7 +78,15 @@ async def run_main(
         old_argv = sys.argv
         sys.argv = argv
         try:
-            await mod.main()
+            await mod.main(
+                infile,
+                outfile,
+                concurrency=8,
+                max_tokens=256,
+                max_retries=2,
+                samples_per_prompt=samples,
+                limit=limit,
+            )
         finally:
             sys.argv = old_argv
     finally:

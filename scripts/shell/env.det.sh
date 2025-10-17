@@ -8,3 +8,4 @@ export CUBLAS_WORKSPACE_CONFIG=${CUBLAS_WORKSPACE_CONFIG:-:4096:8}
 export NVIDIA_TF32_OVERRIDE=${NVIDIA_TF32_OVERRIDE:-0}
 # Optional: tame thread noise a bit
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+export PYTHONWARNINGS=${PYTHONWARNINGS:-"ignore:The pynvml package is deprecated:FutureWarning"}
