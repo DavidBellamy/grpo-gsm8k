@@ -30,7 +30,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--infile", type=Path, default=Path("artifacts/gsm8k/val.jsonl"))
     parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Math-1.5B")
     parser.add_argument(
-        "--outfile", type=Path, default=Path("artifacts/tokenized/val_tokenized.jsonl")
+        "--outfile", type=Path, default=Path("artifacts/processed/val_templated.jsonl")
     )
     return parser.parse_args(argv)
 

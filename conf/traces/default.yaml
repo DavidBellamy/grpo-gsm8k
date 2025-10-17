@@ -6,9 +6,9 @@ gen_traces:
   max_tokens: 2048
   max_retries: 5
   samples_per_prompt: 1
-  limit: 10
+  limit: null
 
 format_traces:
   infile: artifacts/deepseek_r1_gsm8k_traces.jsonl
   outfile: artifacts/r1_sft_pairs.jsonl
-  limit: 10
+  limit: null

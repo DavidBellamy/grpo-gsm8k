@@ -1,13 +1,13 @@
-# @package tokenize
+# @package preprocess
 tokenize_train:
   infile: artifacts/r1_sft_pairs.jsonl
   model_id: Qwen/Qwen2.5-Math-1.5B
-  out_dir: artifacts/tokenized
+  out_dir: artifacts/processed
   batch_size: 512
   max_total_tokens: 2048
   shard_size: 10000
 
-tokenize_val:
+template_val:
   infile: artifacts/gsm8k/val.jsonl
   model_id: Qwen/Qwen2.5-Math-1.5B
-  outfile: artifacts/tokenized/val_tokenized.jsonl
+  outfile: artifacts/processed/val_templated.jsonl

@@ -1,5 +1,5 @@
-train_data_path: artifacts/tokenized/*.pt
-val_data_path: artifacts/tokenized/val_tokenized.jsonl
+train_data_path: artifacts/processed/*.pt
+val_data_path: artifacts/processed/val_templated.jsonl
 model_id: Qwen/Qwen2.5-Math-1.5B
 device: cuda:0
 vllm_device: cuda:1

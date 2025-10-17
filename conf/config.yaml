@@ -1,9 +1,10 @@
 defaults:
+  - wandb: default
   - sft: default
   - eval: default
   - data: default
   - traces: default
-  - tokenize: default
+  - preprocess: default
   - _self_
 
 command: eval

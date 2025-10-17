@@ -35,7 +35,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--infile", type=Path, default=Path("artifacts/r1_sft_pairs.jsonl"))
     parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Math-1.5B")
-    parser.add_argument("--out_dir", type=Path, default=Path("artifacts/tokenized"))
+    parser.add_argument("--out_dir", type=Path, default=Path("artifacts/processed"))
     parser.add_argument("--batch_size", type=int, default=512)
     parser.add_argument("--max_total_tokens", type=int, default=2048)  # matches sft.py default
     parser.add_argument("--shard_size", type=int, default=10000)  # examples per shard

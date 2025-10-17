@@ -1,0 +1,22 @@
+services:
+  grpo:
+    image: ghcr.io/davidbellamy/grpo-gsm8k:latest
+    working_dir: /workspace
+    shm_size: "32g"
+    volumes:
+      - ./:/workspace
+      - ~/.cache/huggingface:/workspace/.cache/huggingface
+    environment:
+      # === optional, picked up from .env if present ===
+      VSCODE_TUNNEL_NAME: ${VSCODE_TUNNEL_NAME:-}
+      DATA_DIR: ${DATA_DIR:-/workspace/data}
+      # Cache & config (entrypoint already defaults these; override only if you want)
+      XDG_CONFIG_HOME: ${XDG_CONFIG_HOME:-/workspace/.config}
+      XDG_CACHE_HOME: ${XDG_CACHE_HOME:-/workspace/.cache}
+      HF_HOME: ${HF_HOME:-/workspace/.cache/huggingface}
+      PIP_CACHE_DIR: ${PIP_CACHE_DIR:-/workspace/.cache/pip}
+      UV_PROJECT_ENVIRONMENT: ${UV_PROJECT_ENVIRONMENT:-/workspace/.venv}
+      GIT_CONFIG_GLOBAL: ${GIT_CONFIG_GLOBAL:-}
+      # API keys / secrets (optional)
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    command: bash
