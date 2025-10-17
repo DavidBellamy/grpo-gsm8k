@@ -139,4 +139,4 @@ Note: ruff and mypy are both run automatically as pre-commit hooks.
 
 ## License
 
-MIT — see `LICENSE`.
+MIT — see [LICENSE](LICENSE).
