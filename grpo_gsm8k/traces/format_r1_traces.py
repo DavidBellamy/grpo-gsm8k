@@ -155,28 +155,32 @@ def format_r1_traces(
     return stats
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(
-        description=("Format DeepSeek R1 GSM8K traces into prompt/response pairs.")
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser("Format DeepSeek R1 GSM8K traces into prompt/response pairs.")
+    parser.add_argument(
+        "--infile", type=Path, default=Path("artifacts/deepseek_r1_gsm8k_traces.jsonl")
     )
-    ap.add_argument("--infile", type=Path, default=Path("artifacts/deepseek_r1_gsm8k_traces.jsonl"))
-    ap.add_argument("--outfile", type=Path, default=Path("artifacts/r1_sft_pairs.jsonl"))
-    ap.add_argument("--limit", type=int, default=None)
-    args = ap.parse_args()
+    parser.add_argument("--outfile", type=Path, default=Path("artifacts/r1_sft_pairs.jsonl"))
+    parser.add_argument("--limit", type=int, default=None)
+    return parser.parse_args(argv)
 
+
+def main(infile: str, outfile: str, limit: int) -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    stats = format_r1_traces(args.infile, args.outfile, limit=args.limit)
+
+    stats = format_r1_traces(Path(infile), Path(outfile), limit=limit)
     logger.info(
         "formatted R1 traces: processed=%d written=%d skipped=%d",
         stats.processed,
         stats.written,
         stats.skipped,
     )
-    logger.info("wrote %s", args.outfile)
+    logger.info("wrote %s", outfile)
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args.infile, args.outfile, args.limit)

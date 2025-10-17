@@ -45,7 +45,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 import aiohttp
 
@@ -115,18 +115,31 @@ def summarize_usage(usage: dict[str, Any] | None) -> dict[str, int]:
     }
 
 
+class RunStats(TypedDict):
+    n_total_in_file: int  # prompts
+    n_already_done: int  # samples
+    n_remaining: int  # samples
+    n_done: int  # samples completed this run
+    prompt_tokens: int
+    completion_tokens: int
+    limit: int | None
+    samples_per_prompt: int
+    prompts_enqueued_this_run: int
+    tasks_enqueued_this_run: int
+
+
 async def worker(
     name: str,
     queue: asyncio.Queue,
     session: aiohttp.ClientSession,
-    args: argparse.Namespace,
+    api_key: str,
+    max_tokens: int,
+    max_retries: int,
     seen_counts: dict[str, int],
     outfile: Path,
     manifest: dict[str, Any],
-    stats: dict[str, Any],
+    stats: RunStats,
 ) -> None:
-    api_key = args.api_key
-
     while True:
         item = await queue.get()
         if item is None:
@@ -149,7 +162,7 @@ async def worker(
                     "as: ANSWER: <number>\n\n"
                     f"Problem: {q}\n"
                 )
-                data = await call_deepseek(session, api_key, prompt, args.max_tokens)
+                data = await call_deepseek(session, api_key, prompt, max_tokens)
                 choice = data["choices"][0]["message"]
                 reasoning = choice.get("reasoning_content", "")
                 final = choice.get("content", "")
@@ -189,7 +202,7 @@ async def worker(
                 stats["completion_tokens"] += usage_summary["completion_tokens"]
                 break
             except Exception as e:
-                if tries <= args.max_retries:
+                if tries <= max_retries:
                     await backoff_sleep(tries)
                     continue
                 rec = {
@@ -206,7 +219,7 @@ async def worker(
         queue.task_done()
 
 
-async def main() -> None:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--infile", type=str, default="artifacts/gsm8k/train.jsonl")
     parser.add_argument("--outfile", type=str, default="artifacts/deepseek_r1_gsm8k_traces.jsonl")
@@ -223,16 +236,23 @@ async def main() -> None:
     parser.add_argument(
         "--limit", type=int, default=None, help="Max number of prompts to send to DeepSeek API"
     )
-    args = parser.parse_args()
+    return parser.parse_args(argv)
 
+
+async def main(
+    infile: Path,
+    outfile: Path,
+    concurrency: int,
+    max_tokens: int,
+    max_retries: int,
+    samples_per_prompt: int,
+    limit: int | None,
+) -> None:
     # Credentials
     api_key = os.environ.get("DEEPSEEK_API_KEY")
     if not api_key:
         raise SystemExit("Missing DEEPSEEK_API_KEY")
-    args.api_key = api_key
 
-    infile = Path(args.infile)
-    outfile = Path(args.outfile)
     outfile.parent.mkdir(parents=True, exist_ok=True)
 
     # Prepare manifest
@@ -244,8 +264,8 @@ async def main() -> None:
         "outfile": str(outfile),
         "provider": "deepseek",
         "model": "deepseek-reasoner",
-        "max_tokens": args.max_tokens,
-        "concurrency": args.concurrency,
+        "max_tokens": max_tokens,
+        "concurrency": concurrency,
         "notes": "GSM8K train reasoning traces with DeepSeek-R1",
     }
 
@@ -269,12 +289,12 @@ async def main() -> None:
                 continue
             total += 1
             # Skip prompts already fully collected
-            if seen.get(_id, 0) >= args.samples_per_prompt:
+            if seen.get(_id, 0) >= samples_per_prompt:
                 continue
-            if args.limit is not None and added >= args.limit:
+            if limit is not None and added >= limit:
                 break
             already = seen.get(_id, 0)
-            for sample_idx in range(already, args.samples_per_prompt):
+            for sample_idx in range(already, samples_per_prompt):
                 await queue.put((_id, q, a, sample_idx))
                 tasks_enqueued += 1
             added += 1
@@ -282,15 +302,15 @@ async def main() -> None:
     # Stats
     already_done_samples = sum(seen.values())
     total_expected_samples = tasks_enqueued + already_done_samples
-    stats = {
+    stats: RunStats = {
         "n_total_in_file": total,  # prompts
         "n_already_done": already_done_samples,  # samples
         "n_remaining": max(0, total_expected_samples - already_done_samples),  # samples
         "n_done": 0,  # samples completed this run
         "prompt_tokens": 0,
         "completion_tokens": 0,
-        "limit": args.limit,
-        "samples_per_prompt": args.samples_per_prompt,
+        "limit": limit,
+        "samples_per_prompt": samples_per_prompt,
         "prompts_enqueued_this_run": added,
         "tasks_enqueued_this_run": tasks_enqueued,
     }
@@ -301,16 +321,27 @@ async def main() -> None:
     with manifest_path.open("w", encoding="utf-8") as mf:
         json.dump(manifest, mf, indent=2)
 
-    connector = aiohttp.TCPConnector(limit_per_host=args.concurrency)
+    connector = aiohttp.TCPConnector(limit_per_host=concurrency)
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=60, sock_read=120)
 
     async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
         # Spawn workers
         workers = [
             asyncio.create_task(
-                worker(f"w{i+1}", queue, session, args, seen, outfile, manifest, stats)
+                worker(
+                    f"w{i+1}",
+                    queue,
+                    session,
+                    api_key,
+                    max_tokens,
+                    max_retries,
+                    seen,
+                    outfile,
+                    manifest,
+                    stats,
+                )
             )
-            for i in range(args.concurrency)
+            for i in range(concurrency)
         ]
 
         # Progress printer
@@ -344,7 +375,7 @@ async def main() -> None:
         "completion_tokens": stats["completion_tokens"],
         "n_completed_this_run_samples": stats["n_done"],
         "n_total_prompts_in_file": stats["n_total_in_file"],
-        "samples_per_prompt": args.samples_per_prompt,
+        "samples_per_prompt": samples_per_prompt,
         "n_prompts_enqueued_this_run": stats["prompts_enqueued_this_run"],
         "n_tasks_enqueued_this_run": stats["tasks_enqueued_this_run"],
     }
@@ -361,4 +392,15 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    args = parse_args()
+    asyncio.run(
+        main(
+            infile=Path(args.infile),
+            outfile=Path(args.outfile),
+            concurrency=args.concurrency,
+            max_tokens=args.max_tokens,
+            max_retries=args.max_retries,
+            samples_per_prompt=args.samples_per_prompt,
+            limit=args.limit,
+        )
+    )

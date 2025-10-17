@@ -1,6 +1,8 @@
 defaults:
   - sft: default
   - eval: default
+  - data: default
+  - traces: default
   - _self_
 
 command: eval

@@ -11,6 +11,7 @@ Hydra-driven CLI for SFT and evaluation workflows.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Mapping
 from datetime import datetime
@@ -79,8 +80,8 @@ def main(cfg: DictConfig) -> None:
     cfg_dict = OmegaConf.to_container(cfg, resolve=True)
     assert isinstance(cfg_dict, dict)
 
-    command = cfg_dict.get("command", "eval")
-    if command not in {"eval", "sft"}:
+    command = cfg_dict.get("command", None)
+    if command not in {"eval", "sft", "data", "traces"}:
         raise ValueError(f"Unknown command: {command}")
 
     # Sub-config for the selected command
@@ -103,13 +104,21 @@ def main(cfg: DictConfig) -> None:
         if command == "eval":
             from grpo_gsm8k.evaluation.eval import main as eval_main
 
-            eval_kwargs: dict[str, Any] = sub_cfg
-            eval_main(**eval_kwargs)
+            eval_main(**sub_cfg)
+        elif command == "data":
+            from grpo_gsm8k.data.data_prep import main as data_main
+
+            data_main(**sub_cfg)
+        elif command == "traces":
+            from grpo_gsm8k.traces.format_r1_traces import main as format_traces
+            from grpo_gsm8k.traces.r1_traces import main as gen_traces
+
+            asyncio.run(gen_traces(**sub_cfg["gen_traces"]))
+            format_traces(**sub_cfg["format_traces"])
         else:  # command == "sft"
             from grpo_gsm8k.training.sft import train_sft_on_r1_pairs
 
-            sft_kwargs: dict[str, Any] = sub_cfg
-            train_sft_on_r1_pairs(**sft_kwargs)
+            train_sft_on_r1_pairs(**sub_cfg)
     finally:
         run.finish()
 
