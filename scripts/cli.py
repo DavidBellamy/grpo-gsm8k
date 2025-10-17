@@ -81,7 +81,7 @@ def main(cfg: DictConfig) -> None:
     assert isinstance(cfg_dict, dict)
 
     command = cfg_dict.get("command", None)
-    if command not in {"eval", "sft", "data", "traces"}:
+    if command not in {"eval", "sft", "data", "traces", "tokenize"}:
         raise ValueError(f"Unknown command: {command}")
 
     # Sub-config for the selected command
@@ -115,6 +115,13 @@ def main(cfg: DictConfig) -> None:
 
             asyncio.run(gen_traces(**sub_cfg["gen_traces"]))
             format_traces(**sub_cfg["format_traces"])
+        elif command == "tokenize":
+            from grpo_gsm8k.data.tokenize_gsm8k_val import main as tokenize_val
+            from grpo_gsm8k.data.tokenize_r1_pairs import main as tokenize_train
+
+            tokenize_train(**sub_cfg["tokenize_train"])
+            tokenize_val(**sub_cfg["tokenize_val"])
+
         else:  # command == "sft"
             from grpo_gsm8k.training.sft import train_sft_on_r1_pairs
 

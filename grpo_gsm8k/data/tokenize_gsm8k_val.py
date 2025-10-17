@@ -25,17 +25,22 @@ def load_val_rows(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Prepare val set prompts for vLLM eval.")
-    ap.add_argument("--infile", type=Path, default=Path("artifacts/gsm8k/val.jsonl"))
-    ap.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Math-1.5B")
-    ap.add_argument("--outfile", type=Path, default=Path("artifacts/tokenized/val_tokenized.jsonl"))
-    args = ap.parse_args()
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Prepare val set prompts for vLLM eval.")
+    parser.add_argument("--infile", type=Path, default=Path("artifacts/gsm8k/val.jsonl"))
+    parser.add_argument("--model_id", type=str, default="Qwen/Qwen2.5-Math-1.5B")
+    parser.add_argument(
+        "--outfile", type=Path, default=Path("artifacts/tokenized/val_tokenized.jsonl")
+    )
+    return parser.parse_args(argv)
 
-    rows = load_val_rows(args.infile)
-    args.outfile.parent.mkdir(parents=True, exist_ok=True)
 
-    tok = AutoTokenizer.from_pretrained(args.model_id, use_fast=True)
+def main(infile: str, model_id: str, outfile: str | Path) -> None:
+    rows = load_val_rows(Path(infile))
+    outfile = Path(outfile)
+    outfile.parent.mkdir(parents=True, exist_ok=True)
+
+    tok = AutoTokenizer.from_pretrained(model_id, use_fast=True)
     if tok.pad_token_id is None:
         tok.pad_token = tok.eos_token or "<|pad|>"
     tok.padding_side = "left"
@@ -43,7 +48,7 @@ def main() -> None:
     questions = [r["question"] for r in rows]
     prompts = render_batch(tok, questions, add_generation_prompt=True)
 
-    with args.outfile.open("w", encoding="utf-8") as w:
+    with outfile.open("w", encoding="utf-8") as w:
         for r, p in zip(rows, prompts):
             gold = r["answer"]
             gold_tail = gold.split("####")[-1] if isinstance(gold, str) and "####" in gold else gold
@@ -56,8 +61,9 @@ def main() -> None:
                 "gold_num": gold_num,  # normalized numeric gold for exact-match
             }
             w.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    print(f"Wrote {args.outfile} ({len(rows)} rows)")
+    print(f"Wrote {outfile} ({len(rows)} rows)")
 
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args.infile, args.model_id, args.outfile)

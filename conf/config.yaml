@@ -3,6 +3,7 @@ defaults:
   - eval: default
   - data: default
   - traces: default
+  - tokenize: default
   - _self_
 
 command: eval

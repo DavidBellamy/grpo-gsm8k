@@ -1,0 +1,13 @@
+# @package tokenize
+tokenize_train:
+  infile: artifacts/r1_sft_pairs.jsonl
+  model_id: Qwen/Qwen2.5-Math-1.5B
+  out_dir: artifacts/tokenized
+  batch_size: 512
+  max_total_tokens: 2048
+  shard_size: 10000
+
+tokenize_val:
+  infile: artifacts/gsm8k/val.jsonl
+  model_id: Qwen/Qwen2.5-Math-1.5B
+  outfile: artifacts/tokenized/val_tokenized.jsonl
