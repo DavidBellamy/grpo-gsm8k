@@ -1,6 +1,6 @@
-# SFT vs RL for Math Reasoning
+# Post-Training Small Math Language Models
 
-A comparison of SFT and GRPO with Qwen2.5-Math-1.5B on GSM8k problems. Only 2 GPUs needed (1 for inference, 1 for training). lm-eval is used to check for capability regressions. Bootstrap confidence intervals are computed for key comparisons.
+A comparison of SFT and GRPO with Qwen2.5-Math-1.5B on GSM8k problems. Only 2 GPUs needed (1 for inference, 1 for training). lm-eval is used to check for capability regressions. Bootstrap confidence intervals are computed for key comparisons. For independent engineers/researchers interested in post-training, this repo can get you started on a personal budget. See [RunPod Instructions](#runpod-instructions).
 
 ---
 
