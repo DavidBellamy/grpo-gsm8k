@@ -1,8 +1,7 @@
 """
-Hydra-driven CLI for SFT and evaluation workflows.
+Hydra-driven CLI for all workflows.
 
 - Configs live under: grpo_gsm8k/conf/
-- Top-level switch: `command` in config (e.g., eval or sft)
 - Example:
     python scripts/cli.py                          # uses defaults (command=eval)
     python scripts/cli.py command=sft                      # run SFT with defaults
@@ -58,7 +57,7 @@ def _flatten_dict(d: Mapping[str, Any], parent_key: str = "", sep: str = ".") ->
     return items
 
 
-def _log_hydra_config_artifact(run: Any, cfg: DictConfig, _run_dir: Path) -> None:
+def _log_hydra_config_artifact(run: Any, cfg: DictConfig) -> None:
     """Serialize Hydra config to YAML and log as a W&B artifact."""
     ts = datetime.now().strftime("%Y%m%dT%H%M%SZ")
     yaml_text = OmegaConf.to_yaml(cfg)
@@ -71,7 +70,7 @@ def _log_hydra_config_artifact(run: Any, cfg: DictConfig, _run_dir: Path) -> Non
     logging.getLogger(__name__).info("Logged Hydra config YAML to W&B artifact")
 
 
-@hydra.main(config_path="../conf", config_name="config", version_base=None)
+@hydra.main(config_path="conf", config_name="config", version_base=None)
 def main(cfg: DictConfig) -> None:
     # Hydra changes the working directory to its run dir. Log within that directory.
     _setup_logging(Path("."), logging.INFO)
@@ -81,7 +80,7 @@ def main(cfg: DictConfig) -> None:
     assert isinstance(cfg_dict, dict)
 
     command = cfg_dict.get("command", None)
-    if command not in {"eval", "sft", "data", "traces", "preprocess"}:
+    if command not in {"eval", "sft", "policy_gradient", "data", "traces", "preprocess"}:
         raise ValueError(f"Unknown command: {command}")
 
     # Sub-config for the selected command
@@ -97,7 +96,7 @@ def main(cfg: DictConfig) -> None:
     wb_config = _flatten_dict(cfg_dict)
 
     run = wandb.init(project=project, name=run_name, entity=entity, config=wb_config)
-    _log_hydra_config_artifact(run, cfg, Path("."))
+    _log_hydra_config_artifact(run, cfg)
     write_run_manifest(extras={"command": command})
 
     try:
@@ -116,11 +115,17 @@ def main(cfg: DictConfig) -> None:
             asyncio.run(gen_traces(**sub_cfg["gen_traces"]))
             format_traces(**sub_cfg["format_traces"])
         elif command == "preprocess":
-            from grpo_gsm8k.data.template_gsm8k_val import main as template_val
+            from grpo_gsm8k.data.template_gsm8k import main as template
             from grpo_gsm8k.data.tokenize_r1_pairs import main as tokenize_train
 
             tokenize_train(**sub_cfg["tokenize_train"])
-            template_val(**sub_cfg["tokenize_val"])
+            template(**sub_cfg["template_val"])
+            template(**sub_cfg["template_train"])
+
+        elif command == "policy_gradient":
+            from grpo_gsm8k.training.policy_gradient import train_policy_gradient
+
+            train_policy_gradient(**sub_cfg)
 
         else:  # command == "sft"
             from grpo_gsm8k.training.sft import train_sft_on_r1_pairs

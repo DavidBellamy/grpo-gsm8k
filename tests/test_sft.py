@@ -9,6 +9,7 @@ import torch
 from safetensors.torch import load_file
 
 import grpo_gsm8k.training.sft as sft
+import grpo_gsm8k.training.utils as utils
 
 
 class FakeConfig:
@@ -69,7 +70,7 @@ def test_ensure_pad_token_sets_from_eos() -> None:
             raise AssertionError("should not be called when eos_token exists")
 
     tk = TK()
-    sft._ensure_pad_token(cast(Any, tk))
+    utils.ensure_pad_token(cast(Any, tk))
     assert tk.pad_token == "</s>"
 
 
@@ -94,7 +95,7 @@ def test_ensure_pad_token_adds_new_when_no_eos() -> None:
             self.pad_token = x["pad_token"]
 
     tk = TK()
-    sft._ensure_pad_token(cast(Any, tk))
+    utils.ensure_pad_token(cast(Any, tk))
     assert tk._added is True
     assert tk.pad_token == "<|pad|>"
 
@@ -110,7 +111,7 @@ def test_resolve_resume_path_picks_latest_step(tmp_path: Path) -> None:
     (step_10 / "config.json").write_text("{}", encoding="utf-8")
     (step_10 / "pytorch_model.safetensors").write_text("", encoding="utf-8")
 
-    resolved = sft._resolve_resume_path(root)
+    resolved = utils.resolve_resume_path(root)
     assert resolved.name == "step_10"
 
 
@@ -121,7 +122,7 @@ def test_resolve_resume_path_fallback_to_root(tmp_path: Path) -> None:
     (root / "misc").mkdir(parents=True)
     # No config.json or safetensors files in any directory
 
-    resolved = sft._resolve_resume_path(root)
+    resolved = utils.resolve_resume_path(root)
     assert resolved.name == "ckpts"  # Falls back to root
 
 
@@ -133,8 +134,12 @@ def test_save_policy_checkpoint_for_vllm(tmp_path: Path) -> None:
             self.config = FakeConfig()
 
     policy = FakePolicy()
-    ckpt_dir = sft.save_policy_checkpoint_for_vllm(
-        policy, step=3, out_root=tmp_path, base="unit", dtype=torch.bfloat16
+    ckpt_dir = utils.save_policy_checkpoint_for_vllm(
+        policy,
+        step=3,
+        out_root=tmp_path,
+        base="unit",
+        dtype=torch.bfloat16,
     )
     assert ckpt_dir.exists()
     assert (ckpt_dir / "config.json").exists()
@@ -175,5 +180,5 @@ def test_vllm_hot_reload_from_dir(tmp_path: Path) -> None:
             self.calls.append((name, args))
 
     llm = FakeLLM()
-    sft._vllm_hot_reload_from_dir(llm, tmp_path)
+    utils._vllm_hot_reload_from_dir(llm, tmp_path)
     assert [c[0] for c in llm.calls] == ["update_config", "reload_weights"]

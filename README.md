@@ -1,6 +1,6 @@
 # SFT vs RL for Math Reasoning
 
-A comparison of SFT and GRPO with Qwen2.5-Math-1.5B on GSM8k problems. Only 2 GPUs needed (1 for inference, 1 for training). lm-eval is used to check for capability regressions. Bootstrap confidence intervals are computed for key comparisons.
+A comparison of the efficacy of popular post-training algorithms for improving math abilities of language models. Specifically, supervised fine-tuning (SFT), REINFORCE (with and without a baseline) and DeepSeek's Group Relative Policy Optimization (GRPO) with Qwen2.5-Math-1.5B on GSM8k problems. Only two GPUs are needed – one for inference, one for training. lm-eval is used to check for capability regressions. Bootstrap confidence intervals are computed for key comparisons.
 
 ---
 
@@ -14,7 +14,7 @@ docker run --rm --gpus all nvidia/cuda:12.8.0-base-ubuntu22.04 nvidia-smi
 ```
 
 1. Clone this repo.
-2. Copy env template and add your DeepSeek API key.
+2. Copy env template and add your DeepSeek API key if you intend on generating DeepSeek R1 tokens for SFT.
 ```bash
 cp .env.example .env
 ```
@@ -32,13 +32,14 @@ docker compose run --rm --gpus all grpo
 
 ## Project Commands Summary
 
-There are 5 main project commands. Each is described in more detail below. Run each from the project's root directory.
+Below are the main project commands. Each is described in more detail in subsequent sections. Run each command from the project's root directory.
 
 ```python
 python cli.py command=data # downloads & splits gsm8k
 python cli.py command=traces # generates R1 completions to gsm8k-train
 python cli.py command=preprocess # preps R1 completions & GSM8k val data
 python cli.py command=sft # trains qwen2.5-math-1.5b (base) with SFT
+python cli.py command=policy_gradient # trains with grpo_clip loss
 python cli.py command=eval # evals qwen2.5-math-1.5b (base) on eval suite
 ```
 
@@ -54,13 +55,19 @@ This command generates DeepSeek R1 chain of thought (aka reasoning traces) via D
 
 ## Command: Preprocess
 
-This command tokenizes, pads and batches the R1 SFT data and applies Qwen's CoT prompt template to the GSM8k val split in order to accelerate inference during training and validation.
+This command tokenizes, pads and batches the R1 SFT data and applies Qwen's CoT prompt template to the GSM8k training and validation splits in order to accelerate inference during training and validation.
 
 ## Command: SFT
 
 This command trains Qwen2.5-Math-1.5B (base) with SFT on R1 reasoning traces. It uses a dual GPU setup with one running vLLM for validation and one running torch. The trainer does forward/backward passes, gradient accumulation and optimizer steps. The vLLM worker evaluates model checkpoints on this project's GSM8k validation split.
 
 Both GPU processes communicate to each other via two multiprocessing queues (OS IPC). After `eval_every` steps, the trainer GPU saves a model checkpoint in the RAM-backed temporary filesystem at `/dev/shm/` (very fast) and enqueues a job payload for the vLLM worker. The vLLM worker is a blocking consumer of jobs and once one arrives it hot-reloads the weights, generates model completions, then enqueues the results in the results queue. The trainer is a non-blocking consumer of the results queue and so it drains results opportunistically just before each optimizer step so that training never stalls. For each result, the trainer logs metrics to W&B.
+
+## Command: Policy Gradient
+
+This command trains Qwen2.5-Math-1.5B (base) with the chosen variant of policy gradient method (REINFORCE with no baseline, REINFORCE with group-mean reward baseline, or GRPO with clipped loss) on problems in the GSM8k train split. It uses a dual GPU setup with one running vLLM for inference and one running torch for training. The inference GPU generates tokens (aka rollouts) from the model for each prompt in the GSM8k train split, which are rewarded and used for gradient descent on the trainer GPU.
+
+Just as with SFT, after `eval_every` steps, the trainer GPU sends a model checkpoint to the inference GPU for evaluation on the GSM8k validation split. The results are returned to the trainer, which logs metrics to W&B.
 
 ## Command: Eval
 
