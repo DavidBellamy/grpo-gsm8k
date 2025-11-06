@@ -219,7 +219,7 @@ def train_policy_gradient(
     normalize_adv_by_std: bool = True,
     advantage_eps: float = 1e-6,
     # Misc
-    microbatch_size_prompts: int = 64,  # how many unique prompts per forward/backward microbatch
+    microbatch_size_prompts: int = 64,  # num unique prompts per train microbatch
     eval_every: int = 20,
     eval_examples: int | None = None,
     checkpoint_dir: str | Path | None = None,  # full HF ckpt aligned to evals
@@ -231,7 +231,7 @@ def train_policy_gradient(
     """
     Policy gradient-style training with:
       - on-policy rollouts from a persistent vLLM worker (GPU1)
-      - group-normalized rewards over K samples per prompt
+      - For GRPO, group-normalized rewards over K samples per prompt
       - example-weighted policy-gradient reduction
       - optimizer step after accumulating a target number of episodes
     """
@@ -239,7 +239,6 @@ def train_policy_gradient(
 
     reward: Callable[[str, str], dict[str, float]]
     if reward_fn is None:
-        # Override via arg for custom tasks
         reward = default_reward
     else:
         reward = reward_fn
@@ -276,14 +275,14 @@ def train_policy_gradient(
 
     policy = AutoModelForCausalLM.from_pretrained(load_path, torch_dtype=model_dtype)
     policy.config.pad_token_id = tok.pad_token_id
-    policy.config.use_cache = False  # we do forward only for logprobs; generation is via vLLM
+    policy.config.use_cache = False  # forward is only for logprobs; generation is via vLLM
     gc = getattr(policy, "generation_config", None)
     if gc is not None:
         gc.pad_token_id = tok.pad_token_id
     policy.to(device_t)
     policy.train()
 
-    # ---------------- async vLLM worker (GPU1) ----------------
+    # ---------------- Async vLLM Worker (GPU1) ----------------
     ctx = get_context("spawn")
     jobs_q: Queue = ctx.Queue(maxsize=64)
     results_q: Queue = ctx.Queue(maxsize=64)
@@ -349,7 +348,7 @@ def train_policy_gradient(
     # Load pre-rendered prompts for rollouts
     train_prompts_chat, _, train_gold_nums = load_templated_gsm8k(train_data_path)
 
-    # Optionally load eval set
+    # Optionally load val set
     eval_prompts_chat: list[str] = []
     eval_gold_strs: list[str] = []
     eval_gold_nums: list[str] = []
@@ -377,7 +376,6 @@ def train_policy_gradient(
         prompts: list[str], responses: list[str]
     ) -> dict[str, torch.Tensor]:
         """Tokenize [prompt || response]; build response_mask over the response span only."""
-        # Left padding → we need per-example prompt lengths to place the mask correctly.
         enc_prompt = tok(prompts, add_special_tokens=False, return_tensors=None)
         enc_full = tok(
             [p + r for p, r in zip(prompts, responses)],
@@ -424,12 +422,12 @@ def train_policy_gradient(
         payload = {
             "ckpt_dir": str(ckpt_dir_vllm),
             "prompts": prom_repeated,
-            "answers": gold_repeated,  # numeric golds; worker uses for accuracy only
+            "answers": gold_repeated,
             "step": int(step),
             "max_new_tokens": int(max_new_tokens),
             "temperature": float(temperature),
             "top_p": float(top_p),
-            "gold_strs": gold_repeated,  # keep for logging
+            "gold_strs": gold_repeated,
         }
         jobs_q.put(payload, block=True)
         # Synchronously wait for this rollout batch
@@ -458,8 +456,8 @@ def train_policy_gradient(
         ] = []  # (logp, mask, old_logp)
         adv_buf: list[float] = []
         rew_buf: list[float] = []
-        fmt_buf: list[float] = []
-        ans_buf: list[float] = []
+        fmt_buf: list[float] = []  # format rewards
+        ans_buf: list[float] = []  # answer rewards
 
         # Grad accum steps := the number of *microbatches* we backprop
         planned_microbatches = 0
@@ -543,8 +541,7 @@ def train_policy_gradient(
             if soft_token_cap_per_update is not None and toks_since >= soft_token_cap_per_update:
                 break
 
-        # ---- backward over collected microbatches ----
-        # Prepare episode-scalar weights (B,) → (B,1) for broadcasting
+        # ---- Backward over collected microbatches ----
         advantages_tensor = (
             torch.tensor(adv_buf, dtype=policy_logp.dtype, device=device_t).unsqueeze(-1)
             if loss_type in ("reinforce_with_baseline", "grpo_clip")
@@ -587,7 +584,7 @@ def train_policy_gradient(
                     clip_frac_cnt += 1
 
         # ---- Optimizer Step ----
-        # Optional gradient clipping
+        # Gradient clipping (turn off in config with max_grad_norm = null)
         global_grad_l2_preclip = 0.0
         with torch.no_grad():
             sq = 0.0
@@ -680,7 +677,7 @@ def train_policy_gradient(
             )
         wandb.log(metrics)
 
-        # ---- periodic async eval ----
+        # ---- Periodic async eval ----
         if eval_every and (update_step % eval_every == 0) and val_data_path is not None:
             kgen = -1
             if eval_examples:
