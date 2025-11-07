@@ -15,8 +15,8 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LambdaLR
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-from grpo_gsm8k.core.per_token_entropy import compute_entropy
 from grpo_gsm8k.training.utils import (
+    RunningStats,
     default_reward,
     ensure_pad_token,
     load_templated_gsm8k,
@@ -149,7 +149,7 @@ def masked_mean(
 def policy_gradient_microbatch_train_step(
     policy_log_probs: torch.Tensor,
     response_mask: torch.Tensor,
-    gradient_accumulation_steps: int,
+    episodes_per_update: int,
     loss_type: Literal["no_baseline", "reinforce_with_baseline", "grpo_clip"],
     raw_rewards: torch.Tensor | None = None,
     advantages: torch.Tensor | None = None,
@@ -166,17 +166,16 @@ def policy_gradient_microbatch_train_step(
 
     # Weight each episode equally in the loss (independent of length)
     loss_per_example = masked_mean(per_token_loss, response_mask, dim=1)
-    loss = loss_per_example.mean()
-
-    scaled_loss = loss / max(1, gradient_accumulation_steps)
+    loss_sum = loss_per_example.sum()
+    scaled_loss = loss_sum / max(1, episodes_per_update)
     scaled_loss.backward()
 
     with torch.no_grad():
         token_count = response_mask.sum()
-        entropy = -(policy_log_probs * response_mask).sum() / token_count.clamp_min(1.0)
+        mean_neg_logp = -(policy_log_probs * response_mask).sum() / token_count.clamp_min(1.0)
         meta: dict[str, torch.Tensor] = {
             "tokens": token_count.detach(),
-            "entropy": entropy.detach(),
+            "mean_neg_logp": mean_neg_logp.detach(),
             "mean_seq_len": (response_mask.sum(dim=1).float().mean()).detach(),
         }
         if advantages is not None:
@@ -196,7 +195,7 @@ def train_policy_gradient(
     device: str | torch.device = "cuda:0",
     vllm_device: str | torch.device = "cuda:1",
     vllm_gpu_memory_utilization: float = 0.85,
-    vllm_batch_prompts: int = 64,
+    vllm_prompts_per_batch: int = 64,
     # Rollout / grouping
     group_size: int = 8,  # K samples per prompt (GRPO group)
     episodes_per_update: int = 256,  # target episodes before each optimizer.step()
@@ -220,7 +219,7 @@ def train_policy_gradient(
     normalize_adv_by_std: bool = True,
     advantage_eps: float = 1e-6,
     # Misc
-    trainer_microbatch_eps: int = 2,
+    trainer_episodes_per_mb: int = 8,
     eval_every: int = 20,
     eval_examples: int | None = None,
     checkpoint_dir: str | Path | None = None,  # full HF ckpt aligned to evals
@@ -228,6 +227,7 @@ def train_policy_gradient(
     resume_from: str | Path | None = None,
     # Reward fn: maps (gold_str, response_text) -> {"reward","format_reward","answer_reward"}
     reward_fn: Callable[[str, str], dict[str, float]] | None = None,
+    entropy_topk: int | None = 32,
 ) -> None:
     """
     Policy gradient-style training with:
@@ -236,7 +236,6 @@ def train_policy_gradient(
       - example-weighted policy-gradient reduction
       - optimizer step after accumulating a target number of episodes
     """
-    assert trainer_microbatch_eps is not None
     assert episodes_per_update % group_size == 0, "group_size must divide episodes_per_update."
 
     reward: Callable[[str, str], dict[str, float]]
@@ -284,7 +283,7 @@ def train_policy_gradient(
     policy.to(device_t)
     policy.train()
 
-    # ---------------- Async vLLM Worker (GPU1) ----------------
+    # Async vLLM Worker (GPU1)
     ctx = get_context("spawn")
     jobs_q: Queue = ctx.Queue(maxsize=64)
     results_q: Queue = ctx.Queue(maxsize=64)
@@ -303,7 +302,7 @@ def train_policy_gradient(
     vllm_proc.start()
     logger.info("Started vLLM rollout worker on GPU %s (pid=%s)", gpu_id, vllm_proc.pid)
 
-    # ---------------- Optimizer & Scheduler ----------------
+    # Optimizer & Scheduler
     decay_params, no_decay_params = [], []
     for name, p in policy.named_parameters():
         if not p.requires_grad:
@@ -373,7 +372,7 @@ def train_policy_gradient(
         log_mode="INCREMENTAL",
     )
 
-    # ---------------- Helpers ----------------
+    # Helpers
     def _tokenize_concat_build_mask(
         prompts: list[str], responses: list[str]
     ) -> dict[str, torch.Tensor]:
@@ -429,7 +428,7 @@ def train_policy_gradient(
             raise RuntimeError(f"vLLM rollout failed: {result['error']}")
         return result
 
-    # ---------------- Main Loop ----------------
+    # Main Loop
     update_step = 0
     start_time = time.perf_counter()
     ptr = 0  # pointer into training prompts
@@ -453,16 +452,10 @@ def train_policy_gradient(
         sum_ratio_clipped = 0.0
         sum_ratio = 0.0
         clip_frac_cnt = 0
-        batches: list[
-            tuple[torch.Tensor, torch.Tensor, torch.Tensor]
-        ] = []  # (logp, mask, old_logp)
-        adv_buf: list[float] = []
-        rew_buf: list[float] = []
-        fmt_buf: list[float] = []  # format rewards
-        ans_buf: list[float] = []  # answer rewards
-
-        # Grad accum steps := the number of *microbatches* we backprop
-        planned_microbatches = 0
+        adv_stats = RunningStats()
+        rew_stats = RunningStats()
+        fmt_stats = RunningStats()
+        ans_stats = RunningStats()
 
         while ep_since < episodes_per_update and (
             soft_token_cap_per_update is None or toks_since < soft_token_cap_per_update
@@ -470,7 +463,7 @@ def train_policy_gradient(
             # Select a chunk of unique prompts; each will be replicated K times in the worker
             episodes_left = episodes_per_update - ep_since
             prompts_left = max(1, episodes_left // group_size)
-            take_prompts = min(vllm_batch_prompts, prompts_left)
+            take_prompts = min(vllm_prompts_per_batch, prompts_left)
 
             if ptr >= N:
                 ptr = 0  # wrap-around epoching
@@ -481,14 +474,14 @@ def train_policy_gradient(
             if not prompts_mb:
                 break
 
-            # ---- rollout via vLLM worker ----
+            # Rollout via vLLM worker
             result = _rollout_with_vllm(
                 update_step, prompts_mb, golds_mb, group_size, ckpt_dir_vllm
             )
             responses = result["responses"]  # length = len(prompts_mb) * group_size
             gold_repeated = result["answers"]
 
-            # ---- rewards & (group) advantages ----
+            # Rewards & (group) advantages
             adv, raw, fmt, ans = compute_group_normalized_rewards(
                 reward,
                 responses,
@@ -497,96 +490,120 @@ def train_policy_gradient(
                 advantage_eps=advantage_eps,
                 normalize_by_std=normalize_adv_by_std,
             )
-            # Save scalar stats
-            adv_buf.extend(adv.tolist())
-            rew_buf.extend(raw.tolist())
-            fmt_buf.extend(fmt.tolist())
-            ans_buf.extend(ans.tolist())
+            adv_stats.update_batch(adv)
+            rew_stats.update_batch(raw)
+            fmt_stats.update_batch(fmt)
+            ans_stats.update_batch(ans)
 
-            # ---- tokenize concat and compute log-probs under current policy ----
-            # (B here is episodes in this microbatch = len(prompts_mb) * K)
+            # Tokenize concatenated prompts + responses
             prompts_rep = [p for p in prompts_mb for _ in range(group_size)]
             pack = _tokenize_concat_build_mask(prompts_rep, responses)
-            input_ids = pack["input_ids"].to(device_t)
-            attn = pack["attention_mask"].to(device_t)
-            resp_mask = pack["response_mask"].to(device_t)
-            with torch.no_grad():
-                logits = policy(input_ids, attn).logits  # (B, T, V)
-                logp_all = torch.log_softmax(logits, dim=-1)
-                # Teacher-forcing: labels are next tokens of the *full* sequence
-                next_ids = torch.roll(input_ids, shifts=-1, dims=1)
-                # Make last position label something valid but masked out by attention anyway
-                next_ids[:, -1] = tok.pad_token_id
-                policy_logp = logp_all.gather(dim=-1, index=next_ids.unsqueeze(-1)).squeeze(-1)
+            input_ids_full = pack["input_ids"]
+            attn_full = pack["attention_mask"]
+            resp_mask_full = pack["response_mask"]
 
-            # Old log-probs (on-policy) = detached snapshot
-            old_logp = policy_logp.detach()
+            # B is the number of episodes *in one vLLM batch*
+            B = input_ids_full.size(0)
 
-            # Episode and token tallies
-            B = input_ids.size(0)
-            ep_since += B
-            toks = int(resp_mask.sum().item())
-            toks_since += toks
+            # Make teacher-forcing labels
+            next_ids_full = torch.roll(input_ids_full, shifts=-1, dims=1)
+            next_ids_full[:, -1] = tok.pad_token_id
+            label_mask = resp_mask_full.bool() & attn_full.bool()  # (B, T)
+            labels_full = input_ids_full.new_full(input_ids_full.shape, -100)
+            labels_full[label_mask] = next_ids_full[label_mask]
 
-            # Entropy for monitoring over response tokens only
-            with torch.no_grad():
-                ent = compute_entropy(logits).detach()
-                mean_ent = float(masked_mean(ent, resp_mask.to(ent.dtype)).item())
-                sum_entropy += mean_ent * toks
+            for s in range(0, B, trainer_episodes_per_mb):
+                e = min(B, s + trainer_episodes_per_mb)
 
-            # Accumulate to train after we’ve built the microbatch tensors
-            batches.append((policy_logp, resp_mask, old_logp))
-            planned_microbatches += 1
+                # slice vLLM rollouts
+                input_ids = input_ids_full[s:e]
+                attn = attn_full[s:e]
+                resp_mask = resp_mask_full[s:e]
+                labels = labels_full[s:e]
 
-            # Hard stop if we hit caps
-            if ep_since >= episodes_per_update:
-                break
-            if soft_token_cap_per_update is not None and toks_since >= soft_token_cap_per_update:
-                break
+                # move slices to GPU
+                input_ids = input_ids.to(device_t, non_blocking=True)
+                attn = attn.to(device_t, non_blocking=True)
+                resp_mask = resp_mask.to(device_t, non_blocking=True)
+                labels = labels.to(device_t, non_blocking=True)
 
-        # ---- Backward over collected microbatches ----
-        advantages_tensor = (
-            torch.tensor(adv_buf, dtype=policy_logp.dtype, device=device_t).unsqueeze(-1)
-            if loss_type in ("reinforce_with_baseline", "grpo_clip")
-            else None
-        )
-        raw_rewards_tensor = (
-            torch.tensor(rew_buf, dtype=policy_logp.dtype, device=device_t).unsqueeze(-1)
-            if loss_type == "no_baseline"
-            else None
-        )
+                # Per-token NLL without materializing softmax
+                logits = policy(input_ids, attn).logits  # (b,t,V)
+                import torch.nn.functional as F
 
-        def _slice_or_none(t: torch.Tensor | None, s: int, e: int) -> torch.Tensor | None:
-            return None if t is None else t[s:e]
+                nll = F.cross_entropy(
+                    logits.view(-1, logits.size(-1)),
+                    labels.view(-1),
+                    reduction="none",
+                    ignore_index=-100,  # ignore prompt tokens
+                ).view_as(labels)
 
-        offset = 0
-        for policy_logp, resp_mask, old_logp in batches:
-            B = policy_logp.size(0)
-            adv_chunk = _slice_or_none(advantages_tensor, offset, offset + B)
-            rew_chunk = _slice_or_none(raw_rewards_tensor, offset, offset + B)
-            _, meta = policy_gradient_microbatch_train_step(  # calls loss.backward()
-                policy_log_probs=policy_logp,
-                response_mask=resp_mask,
-                gradient_accumulation_steps=max(1, planned_microbatches),
-                loss_type=loss_type,
-                raw_rewards=rew_chunk,
-                advantages=adv_chunk,
-                old_log_probs=old_logp,
-                cliprange=cliprange,
-            )
+                policy_logp = -nll  # (b, t)
+                old_logp = policy_logp.detach()  # for proximal updates e.g. GRPO-clip
 
-            offset += B
+                # update tallies
+                toks = int(resp_mask.sum().item())
+                ep_since += policy_logp.size(0)
+                toks_since += toks
 
-            # importance sampling stats for logging
-            if "importance_wts" in meta:
-                w = meta["importance_wts"]
-                cw = meta.get("clipped_wts", None)
-                sum_ratio += float(w.mean().item())
-                if cw is not None:
-                    sum_ratio_clipped += float((w.ne(cw)).float().mean().item())
-                    clip_frac_cnt += 1
+                # Entropy top-k for monitoring (no grad)
+                if entropy_topk and entropy_topk > 0:
+                    with torch.no_grad():
+                        vals, _ = logits.topk(entropy_topk, dim=-1)
+                        lse = vals.logsumexp(dim=-1, keepdim=True)
+                        p = (vals - lse).exp()
+                        ent = -(p * (vals - lse)).sum(dim=-1)  # (b,t)
+                        sum_entropy += (
+                            float(masked_mean(ent, resp_mask.to(ent.dtype)).item()) * toks
+                        )
 
-        # ---- Optimizer Step ----
+                # choose advantage vs. reward slice for this chunk
+                adv_chunk = None
+                rew_chunk = None
+                if loss_type in ("reinforce_with_baseline", "grpo_clip"):
+                    adv_chunk = (
+                        adv[s:e].to(device_t, dtype=policy_logp.dtype).unsqueeze(-1)
+                    )  # (b,1)
+                if loss_type == "no_baseline":
+                    rew_chunk = (
+                        raw[s:e].to(device_t, dtype=policy_logp.dtype).unsqueeze(-1)
+                    )  # (b,1)
+
+                # one backward per chunk (grad accumulation)
+                _, meta = policy_gradient_microbatch_train_step(
+                    policy_log_probs=policy_logp,  # (b,t)
+                    response_mask=resp_mask,  # (b,t)
+                    episodes_per_update=episodes_per_update,
+                    loss_type=loss_type,
+                    raw_rewards=rew_chunk,
+                    advantages=adv_chunk,
+                    old_log_probs=old_logp,  # (b,t)
+                    cliprange=cliprange,
+                )
+
+                # logging pieces
+                if "importance_wts" in meta:
+                    w = meta["importance_wts"]
+                    cw = meta.get("clipped_wts", None)
+                    sum_ratio += float(w.mean().item())
+                    if cw is not None:
+                        sum_ratio_clipped += float((w.ne(cw)).float().mean().item())
+                        clip_frac_cnt += 1
+
+                # free big tensors ASAP
+                del logits, nll, policy_logp, old_logp, input_ids, attn, labels, resp_mask
+
+            del adv, raw, fmt, ans
+
+        # Optimizer Step
+
+        # Rescale gradients by the actual number of episodes
+        if 0 < ep_since != episodes_per_update:
+            scale = episodes_per_update / ep_since
+            for p in policy.parameters():
+                if p.grad is not None:
+                    p.grad.mul_(scale)
+
         # Gradient clipping (turn off in config with max_grad_norm = null)
         global_grad_l2_preclip = 0.0
         with torch.no_grad():
@@ -615,10 +632,14 @@ def train_policy_gradient(
             logger.warning("LR scheduler step failed: %s", e)
         current_lr = float(optimizer.param_groups[0]["lr"])
 
-        # ---- Logging ----
+        # Logging
         elapsed = time.perf_counter() - start_time
         tps = toks_since / max(elapsed, 1e-9)
         mean_ent_update = (sum_entropy / max(toks_since, 1.0)) if toks_since else 0.0
+        a = adv_stats.finalize()
+        r = rew_stats.finalize()
+        f = fmt_stats.finalize()
+        g = ans_stats.finalize()
         metrics = {
             "steps/train_step": int(update_step),
             f"{train_title}/episodes_update": int(ep_since),
@@ -628,50 +649,22 @@ def train_policy_gradient(
             f"{train_title}/lr": float(current_lr),
             f"{train_title}/global_grad_l2_preclip": float(global_grad_l2_preclip),
             f"{train_title}/global_grad_l2_postclip": float(global_grad_l2_postclip),
-            f"{train_title}/adv_mean": float(torch.tensor(adv_buf).mean().item())
-            if adv_buf
-            else 0.0,
-            f"{train_title}/adv_min": float(torch.tensor(adv_buf).min().item()) if adv_buf else 0.0,
-            f"{train_title}/adv_max": float(torch.tensor(adv_buf).max().item()) if adv_buf else 0.0,
-            f"{train_title}/adv_std": float(torch.tensor(adv_buf).std(unbiased=False).item())
-            if adv_buf
-            else 0.0,
-            f"{train_title}/reward_mean": float(torch.tensor(rew_buf).mean().item())
-            if rew_buf
-            else 0.0,
-            f"{train_title}/reward_min": float(torch.tensor(rew_buf).min().item())
-            if rew_buf
-            else 0.0,
-            f"{train_title}/reward_max": float(torch.tensor(rew_buf).max().item())
-            if rew_buf
-            else 0.0,
-            f"{train_title}/reward_std": float(torch.tensor(rew_buf).std(unbiased=False).item())
-            if rew_buf
-            else 0.0,
-            f"{train_title}/fmt_reward_mean": float(torch.tensor(fmt_buf).mean().item())
-            if fmt_buf
-            else 0.0,
-            f"{train_title}/fmt_reward_min": float(torch.tensor(fmt_buf).min().item())
-            if fmt_buf
-            else 0.0,
-            f"{train_title}/fmt_reward_max": float(torch.tensor(fmt_buf).max().item())
-            if fmt_buf
-            else 0.0,
-            f"{train_title}/fmt_reward_std": float(torch.tensor(fmt_buf).std(unbiased=False).item())
-            if fmt_buf
-            else 0.0,
-            f"{train_title}/ans_reward_mean": float(torch.tensor(ans_buf).mean().item())
-            if ans_buf
-            else 0.0,
-            f"{train_title}/ans_reward_mix": float(torch.tensor(ans_buf).min().item())
-            if ans_buf
-            else 0.0,
-            f"{train_title}/ans_reward_max": float(torch.tensor(ans_buf).max().item())
-            if ans_buf
-            else 0.0,
-            f"{train_title}/ans_reward_std": float(torch.tensor(ans_buf).std(unbiased=False).item())
-            if ans_buf
-            else 0.0,
+            f"{train_title}/adv_mean": a["mean"],
+            f"{train_title}/adv_min": a["min"],
+            f"{train_title}/adv_max": a["max"],
+            f"{train_title}/adv_std": a["std"],
+            f"{train_title}/reward_mean": r["mean"],
+            f"{train_title}/reward_min": r["min"],
+            f"{train_title}/reward_max": r["max"],
+            f"{train_title}/reward_std": r["std"],
+            f"{train_title}/fmt_reward_mean": f["mean"],
+            f"{train_title}/fmt_reward_min": f["min"],
+            f"{train_title}/fmt_reward_max": f["max"],
+            f"{train_title}/fmt_reward_std": f["std"],
+            f"{train_title}/ans_reward_mean": g["mean"],
+            f"{train_title}/ans_reward_min": g["min"],
+            f"{train_title}/ans_reward_max": g["max"],
+            f"{train_title}/ans_reward_std": g["std"],
         }
         if loss_type == "grpo_clip" and clip_frac_cnt > 0:
             metrics[f"{train_title}/wt_mean"] = float(sum_ratio / max(1, clip_frac_cnt))
@@ -680,7 +673,7 @@ def train_policy_gradient(
             )
         wandb.log(metrics)
 
-        # ---- Periodic async eval ----
+        # Periodic async eval
         if eval_every and (update_step % eval_every == 0) and val_data_path is not None:
             kgen = -1
             if eval_examples:

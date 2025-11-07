@@ -443,3 +443,48 @@ def save_policy_checkpoint_for_vllm(
     if logger:
         logger.info("Wrote vLLM checkpoint: %s", final_dir)
     return final_dir
+
+
+class RunningStats:
+    def __init__(self) -> None:
+        self.n: int = 0
+        self.mean: float = 0.0
+        self.M2: float = 0.0
+        self.vmin: float = math.inf
+        self.vmax: float = -math.inf
+
+    def update_batch(self, x: torch.Tensor) -> None:
+        # x is 1D cpu/gpu tensor; do it on CPU to avoid GPU mem
+        t: torch.Tensor = x.detach().float().cpu()
+
+        k: int = int(t.numel())
+        if k == 0:
+            return
+
+        # per-batch summary stats as Python floats
+        batch_min: float = float(t.min().item())
+        batch_max: float = float(t.max().item())
+        m: float = float(t.mean().item())
+        v: float = float(t.var(unbiased=False).item())
+
+        # update running min/max
+        self.vmin = min(self.vmin, batch_min)
+        self.vmax = max(self.vmax, batch_max)
+
+        # merge batch stats into running stats
+        n_total: int = self.n + k
+        delta: float = m - self.mean
+        self.mean += delta * (k / n_total)
+
+        # parallel variance (Welford/Chan) update
+        self.M2 += v * k + (delta * delta) * (self.n * k / n_total)
+        self.n = n_total
+
+    def finalize(self) -> dict[str, float]:
+        std: float = math.sqrt(self.M2 / max(1, self.n)) if self.n else 0.0
+        return {
+            "mean": self.mean,
+            "std": std,
+            "min": self.vmin if self.n else 0.0,
+            "max": self.vmax if self.n else 0.0,
+        }
