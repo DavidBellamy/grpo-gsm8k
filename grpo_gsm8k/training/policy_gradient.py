@@ -196,6 +196,7 @@ def train_policy_gradient(
     device: str | torch.device = "cuda:0",
     vllm_device: str | torch.device = "cuda:1",
     vllm_gpu_memory_utilization: float = 0.85,
+    vllm_batch_prompts: int = 64,
     # Rollout / grouping
     group_size: int = 8,  # K samples per prompt (GRPO group)
     episodes_per_update: int = 256,  # target episodes before each optimizer.step()
@@ -219,7 +220,7 @@ def train_policy_gradient(
     normalize_adv_by_std: bool = True,
     advantage_eps: float = 1e-6,
     # Misc
-    microbatch_size_prompts: int = 64,  # num unique prompts per train microbatch
+    trainer_microbatch_eps: int = 2,
     eval_every: int = 20,
     eval_examples: int | None = None,
     checkpoint_dir: str | Path | None = None,  # full HF ckpt aligned to evals
@@ -235,6 +236,7 @@ def train_policy_gradient(
       - example-weighted policy-gradient reduction
       - optimizer step after accumulating a target number of episodes
     """
+    assert trainer_microbatch_eps is not None
     assert episodes_per_update % group_size == 0, "group_size must divide episodes_per_update."
 
     reward: Callable[[str, str], dict[str, float]]
@@ -404,18 +406,9 @@ def train_policy_gradient(
         }
 
     def _rollout_with_vllm(
-        step: int, prompts: list[str], golds: list[str], K: int
+        step: int, prompts: list[str], golds: list[str], K: int, ckpt_dir_vllm: str | Path
     ) -> dict[str, Any]:
         """Replicate prompts K times; synchronous round-trip with the worker."""
-        # Ensure the worker is hot-reloaded to the *current* policy weights
-        ckpt_dir_vllm = save_policy_checkpoint_for_vllm(
-            policy,
-            step,
-            out_root="/dev/shm",
-            base="qwen15b_step",
-            dtype=torch.bfloat16,
-            logger=logger,
-        )
         # Build repeated lists so groups are contiguous
         prom_repeated = [p for p in prompts for _ in range(K)]
         gold_repeated = [g for g in golds for _ in range(K)]
@@ -444,6 +437,15 @@ def train_policy_gradient(
     assert N > 0, "No training prompts"
 
     while update_step < total_update_steps:
+        # send policy weights to vllm worker
+        ckpt_dir_vllm = save_policy_checkpoint_for_vllm(
+            policy,
+            update_step,
+            out_root="/dev/shm",
+            base="qwen15b_step",
+            dtype=torch.bfloat16,
+            logger=logger,
+        )
         # ---- collect rollouts up to the target update size ----
         ep_since = 0
         toks_since = 0
@@ -466,10 +468,9 @@ def train_policy_gradient(
             soft_token_cap_per_update is None or toks_since < soft_token_cap_per_update
         ):
             # Select a chunk of unique prompts; each will be replicated K times in the worker
-            m = microbatch_size_prompts
             episodes_left = episodes_per_update - ep_since
             prompts_left = max(1, episodes_left // group_size)
-            take_prompts = min(m, prompts_left)
+            take_prompts = min(vllm_batch_prompts, prompts_left)
 
             if ptr >= N:
                 ptr = 0  # wrap-around epoching
@@ -481,7 +482,9 @@ def train_policy_gradient(
                 break
 
             # ---- rollout via vLLM worker ----
-            result = _rollout_with_vllm(update_step, prompts_mb, golds_mb, group_size)
+            result = _rollout_with_vllm(
+                update_step, prompts_mb, golds_mb, group_size, ckpt_dir_vllm
+            )
             responses = result["responses"]  # length = len(prompts_mb) * group_size
             gold_repeated = result["answers"]
 
@@ -612,7 +615,7 @@ def train_policy_gradient(
             logger.warning("LR scheduler step failed: %s", e)
         current_lr = float(optimizer.param_groups[0]["lr"])
 
-        # ---- logging ----
+        # ---- Logging ----
         elapsed = time.perf_counter() - start_time
         tps = toks_since / max(elapsed, 1e-9)
         mean_ent_update = (sum_entropy / max(toks_since, 1.0)) if toks_since else 0.0
@@ -686,14 +689,6 @@ def train_policy_gradient(
             gold_nums_for_eval = eval_gold_nums[:kgen]
             gold_strs_for_eval = eval_gold_strs[:kgen]
             try:
-                ckpt_dir_vllm = save_policy_checkpoint_for_vllm(
-                    policy,
-                    update_step,
-                    out_root="/dev/shm",
-                    base="qwen15b_step",
-                    dtype=torch.bfloat16,
-                    logger=logger,
-                )
                 payload = {
                     "ckpt_dir": str(ckpt_dir_vllm),
                     "prompts": prompts_for_eval,

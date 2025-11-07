@@ -4,9 +4,10 @@ model_id: Qwen/Qwen2.5-Math-1.5B
 device: cuda:0
 vllm_device: cuda:1
 vllm_gpu_memory_utilization: 0.85
+vllm_batch_prompts: 64  # vllm worker rolls out (this * group_size) sequences
 group_size: 8
-episodes_per_update: 256  # must be a multiple of group_size
-soft_token_cap_per_update: 400000
+episodes_per_update: 512  # must be a multiple of group_size
+soft_token_cap_per_update: 1000000
 max_new_tokens: 2048  # generation length cap (action tokens)
 temperature: 1.0
 top_p: 1.0
@@ -24,9 +25,9 @@ cliprange: 0.2
 normalize_adv_by_std: true
 advantage_eps: 1e-6
 # Misc
-microbatch_size_prompts: 64  # how many unique prompts per forward/backward microbatch
+trainer_microbatch_eps: 2  # how many episodes the trainer processes at once
 eval_every: 20
-eval_examples: 256
+eval_examples: null
 checkpoint_dir: null  # full HF ckpt aligned to evals
 model_dtype: null
 resume_from: null
