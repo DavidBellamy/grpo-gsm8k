@@ -8,6 +8,7 @@ vllm_prompts_per_batch: 64  # vllm worker rolls out (this * group_size) sequence
 group_size: 8
 episodes_per_update: 512  # must be a multiple of group_size
 soft_token_cap_per_update: 1000000
+trainer_episodes_per_mb: 4  # how many episodes the trainer processes per microbatch
 max_new_tokens: 2048  # generation length cap (action tokens)
 temperature: 1.0
 top_p: 1.0
@@ -25,7 +26,6 @@ cliprange: 0.2
 normalize_adv_by_std: true
 advantage_eps: 1e-6
 # Misc
-trainer_episodes_per_mb: 2  # how many episodes the trainer processes per microbatch
 eval_every: 20
 eval_examples: null
 checkpoint_dir: null  # full HF ckpt aligned to evals

@@ -13,6 +13,7 @@ import torch
 import wandb
 from torch.nn.utils import clip_grad_norm_
 from torch.optim.lr_scheduler import LambdaLR
+from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from grpo_gsm8k.training.utils import (
@@ -199,7 +200,8 @@ def train_policy_gradient(
     # Rollout / grouping
     group_size: int = 8,  # K samples per prompt (GRPO group)
     episodes_per_update: int = 256,  # target episodes before each optimizer.step()
-    soft_token_cap_per_update: int | None = 400_000,
+    soft_token_cap_per_update: int | None = 1_000_000,
+    trainer_episodes_per_mb: int = 8,
     max_new_tokens: int = 2048,  # generation length cap (action tokens)
     temperature: float = 1.0,
     top_p: float = 1.0,
@@ -219,7 +221,6 @@ def train_policy_gradient(
     normalize_adv_by_std: bool = True,
     advantage_eps: float = 1e-6,
     # Misc
-    trainer_episodes_per_mb: int = 8,
     eval_every: int = 20,
     eval_examples: int | None = None,
     checkpoint_dir: str | Path | None = None,  # full HF ckpt aligned to evals
@@ -512,86 +513,94 @@ def train_policy_gradient(
             labels_full = input_ids_full.new_full(input_ids_full.shape, -100)
             labels_full[label_mask] = next_ids_full[label_mask]
 
-            for s in range(0, B, trainer_episodes_per_mb):
-                e = min(B, s + trainer_episodes_per_mb)
+            with tqdm(
+                total=B,
+                desc=f"episodes (upd {update_step})",
+                unit="ep",
+                leave=False,
+            ) as pbar:
+                for s in range(0, B, trainer_episodes_per_mb):
+                    e = min(B, s + trainer_episodes_per_mb)
 
-                # slice vLLM rollouts
-                input_ids = input_ids_full[s:e]
-                attn = attn_full[s:e]
-                resp_mask = resp_mask_full[s:e]
-                labels = labels_full[s:e]
+                    # slice vLLM rollouts
+                    input_ids = input_ids_full[s:e]
+                    attn = attn_full[s:e]
+                    resp_mask = resp_mask_full[s:e]
+                    labels = labels_full[s:e]
 
-                # move slices to GPU
-                input_ids = input_ids.to(device_t, non_blocking=True)
-                attn = attn.to(device_t, non_blocking=True)
-                resp_mask = resp_mask.to(device_t, non_blocking=True)
-                labels = labels.to(device_t, non_blocking=True)
+                    # move slices to GPU
+                    input_ids = input_ids.to(device_t, non_blocking=True)
+                    attn = attn.to(device_t, non_blocking=True)
+                    resp_mask = resp_mask.to(device_t, non_blocking=True)
+                    labels = labels.to(device_t, non_blocking=True)
 
-                # Per-token NLL without materializing softmax
-                logits = policy(input_ids, attn).logits  # (b,t,V)
-                import torch.nn.functional as F
+                    # Per-token NLL without materializing softmax
+                    logits = policy(input_ids, attn).logits  # (b,t,V)
+                    import torch.nn.functional as F
 
-                nll = F.cross_entropy(
-                    logits.view(-1, logits.size(-1)),
-                    labels.view(-1),
-                    reduction="none",
-                    ignore_index=-100,  # ignore prompt tokens
-                ).view_as(labels)
+                    nll = F.cross_entropy(
+                        logits.view(-1, logits.size(-1)),
+                        labels.view(-1),
+                        reduction="none",
+                        ignore_index=-100,  # ignore prompt tokens
+                    ).view_as(labels)
 
-                policy_logp = -nll  # (b, t)
-                old_logp = policy_logp.detach()  # for proximal updates e.g. GRPO-clip
+                    policy_logp = -nll  # (b, t)
+                    old_logp = policy_logp.detach()  # for proximal updates e.g. GRPO-clip
 
-                # update tallies
-                toks = int(resp_mask.sum().item())
-                ep_since += policy_logp.size(0)
-                toks_since += toks
+                    # update tallies
+                    toks = int(resp_mask.sum().item())
+                    ep_since += policy_logp.size(0)
+                    toks_since += toks
 
-                # Entropy top-k for monitoring (no grad)
-                if entropy_topk and entropy_topk > 0:
-                    with torch.no_grad():
-                        vals, _ = logits.topk(entropy_topk, dim=-1)
-                        lse = vals.logsumexp(dim=-1, keepdim=True)
-                        p = (vals - lse).exp()
-                        ent = -(p * (vals - lse)).sum(dim=-1)  # (b,t)
-                        sum_entropy += (
-                            float(masked_mean(ent, resp_mask.to(ent.dtype)).item()) * toks
-                        )
+                    # Entropy top-k for monitoring (no grad)
+                    if entropy_topk and entropy_topk > 0:
+                        with torch.no_grad():
+                            vals, _ = logits.topk(entropy_topk, dim=-1)
+                            lse = vals.logsumexp(dim=-1, keepdim=True)
+                            p = (vals - lse).exp()
+                            ent = -(p * (vals - lse)).sum(dim=-1)  # (b,t)
+                            sum_entropy += (
+                                float(masked_mean(ent, resp_mask.to(ent.dtype)).item()) * toks
+                            )
 
-                # choose advantage vs. reward slice for this chunk
-                adv_chunk = None
-                rew_chunk = None
-                if loss_type in ("reinforce_with_baseline", "grpo_clip"):
-                    adv_chunk = (
-                        adv[s:e].to(device_t, dtype=policy_logp.dtype).unsqueeze(-1)
-                    )  # (b,1)
-                if loss_type == "no_baseline":
-                    rew_chunk = (
-                        raw[s:e].to(device_t, dtype=policy_logp.dtype).unsqueeze(-1)
-                    )  # (b,1)
+                    # choose advantage vs. reward slice for this chunk
+                    adv_chunk = None
+                    rew_chunk = None
+                    if loss_type in ("reinforce_with_baseline", "grpo_clip"):
+                        adv_chunk = (
+                            adv[s:e].to(device_t, dtype=policy_logp.dtype).unsqueeze(-1)
+                        )  # (b,1)
+                    if loss_type == "no_baseline":
+                        rew_chunk = (
+                            raw[s:e].to(device_t, dtype=policy_logp.dtype).unsqueeze(-1)
+                        )  # (b,1)
 
-                # one backward per chunk (grad accumulation)
-                _, meta = policy_gradient_microbatch_train_step(
-                    policy_log_probs=policy_logp,  # (b,t)
-                    response_mask=resp_mask,  # (b,t)
-                    episodes_per_update=episodes_per_update,
-                    loss_type=loss_type,
-                    raw_rewards=rew_chunk,
-                    advantages=adv_chunk,
-                    old_log_probs=old_logp,  # (b,t)
-                    cliprange=cliprange,
-                )
+                    # one backward per chunk (grad accumulation)
+                    _, meta = policy_gradient_microbatch_train_step(
+                        policy_log_probs=policy_logp,  # (b,t)
+                        response_mask=resp_mask,  # (b,t)
+                        episodes_per_update=episodes_per_update,
+                        loss_type=loss_type,
+                        raw_rewards=rew_chunk,
+                        advantages=adv_chunk,
+                        old_log_probs=old_logp,  # (b,t)
+                        cliprange=cliprange,
+                    )
 
-                # logging pieces
-                if "importance_wts" in meta:
-                    w = meta["importance_wts"]
-                    cw = meta.get("clipped_wts", None)
-                    sum_ratio += float(w.mean().item())
-                    if cw is not None:
-                        sum_ratio_clipped += float((w.ne(cw)).float().mean().item())
-                        clip_frac_cnt += 1
+                    # logging pieces
+                    if "importance_wts" in meta:
+                        w = meta["importance_wts"]
+                        cw = meta.get("clipped_wts", None)
+                        sum_ratio += float(w.mean().item())
+                        if cw is not None:
+                            sum_ratio_clipped += float((w.ne(cw)).float().mean().item())
+                            clip_frac_cnt += 1
 
-                # free big tensors ASAP
-                del logits, nll, policy_logp, old_logp, input_ids, attn, labels, resp_mask
+                    # free big tensors ASAP
+                    del logits, nll, policy_logp, old_logp, input_ids, attn, labels, resp_mask
+
+                    pbar.update(e - s)
 
             del adv, raw, fmt, ans
 
