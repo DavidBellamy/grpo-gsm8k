@@ -8,7 +8,7 @@ vllm_prompts_per_batch: 64  # vllm worker rolls out (this * group_size) sequence
 group_size: 8
 episodes_per_update: 512  # must be a multiple of group_size
 soft_token_cap_per_update: 1000000
-trainer_episodes_per_mb: 4  # how many episodes the trainer processes per microbatch
+trainer_episodes_per_mb: 8  # how many episodes the trainer processes per microbatch
 max_new_tokens: 2048  # generation length cap (action tokens)
 temperature: 1.0
 top_p: 1.0
@@ -33,3 +33,6 @@ model_dtype: null
 resume_from: null
 reward_fn: null  # null uses default
 entropy_topk: 32
+# Trainer memory tuning
+replay_path: null
+record_replay_path: null

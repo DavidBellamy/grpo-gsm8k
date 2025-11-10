@@ -165,6 +165,25 @@ def policy_gradient_microbatch_train_step(
         policy_log_probs, loss_type, raw_rewards, advantages, old_log_probs, cliprange
     )
 
+    # Guard against empty responses
+    lengths = response_mask.sum(dim=1)
+    keep = lengths > 0
+    dropped = (~keep).sum().item()
+    if dropped:
+        # Filter tensors down to only valid episodes
+        policy_log_probs = policy_log_probs[keep]
+        response_mask = response_mask[keep]
+        per_token_loss = per_token_loss[keep]
+        if advantages is not None:
+            advantages = advantages[keep]
+        if raw_rewards is not None:
+            raw_rewards = raw_rewards[keep]
+
+    episodes_used = int(policy_log_probs.size(0))
+    # Expose counts for the caller to correctly accumulate ep_since
+    extrameta["episodes_used"] = torch.tensor(episodes_used)
+    extrameta["episodes_dropped_zero_len"] = torch.tensor(int(dropped))
+
     # Weight each episode equally in the loss (independent of length)
     loss_per_example = masked_mean(per_token_loss, response_mask, dim=1)
     loss_sum = loss_per_example.sum()
@@ -229,6 +248,9 @@ def train_policy_gradient(
     # Reward fn: maps (gold_str, response_text) -> {"reward","format_reward","answer_reward"}
     reward_fn: Callable[[str, str], dict[str, float]] | None = None,
     entropy_topk: int | None = 32,
+    # Replay feature
+    replay_path: str | Path | None = None,
+    record_replay_path: str | Path | None = None,
 ) -> None:
     """
     Policy gradient-style training with:
@@ -238,6 +260,9 @@ def train_policy_gradient(
       - optimizer step after accumulating a target number of episodes
     """
     assert episodes_per_update % group_size == 0, "group_size must divide episodes_per_update."
+    # Replay/record guard
+    if replay_path is not None and record_replay_path is not None:
+        raise ValueError("Only one of replay_path or record_replay_path may be set.")
 
     reward: Callable[[str, str], dict[str, float]]
     if reward_fn is None:
@@ -284,24 +309,28 @@ def train_policy_gradient(
     policy.to(device_t)
     policy.train()
 
-    # Async vLLM Worker (GPU1)
-    ctx = get_context("spawn")
-    jobs_q: Queue = ctx.Queue(maxsize=64)
-    results_q: Queue = ctx.Queue(maxsize=64)
-    gpu_id = str(vllm_device).replace("cuda:", "")
-    vllm_proc: SpawnProcess = ctx.Process(
-        target=vllm_worker_persistent,
-        args=(jobs_q, results_q),
-        kwargs=dict(
-            base_model_id=model_id,
-            gpu_id=gpu_id,
-            gpu_memory_utilization=float(vllm_gpu_memory_utilization),
-            dtype="bfloat16",
-        ),
-        daemon=False,
-    )
-    vllm_proc.start()
-    logger.info("Started vLLM rollout worker on GPU %s (pid=%s)", gpu_id, vllm_proc.pid)
+    if replay_path:
+        pack = torch.load(str(replay_path), map_location="cpu")
+        logger.info(f"Loaded replay batch from {replay_path}")
+    else:
+        # Spawn async vLLM Worker (GPU1)
+        ctx = get_context("spawn")
+        jobs_q: Queue = ctx.Queue(maxsize=64)
+        results_q: Queue = ctx.Queue(maxsize=64)
+        gpu_id = str(vllm_device).replace("cuda:", "")
+        vllm_proc: SpawnProcess = ctx.Process(
+            target=vllm_worker_persistent,
+            args=(jobs_q, results_q),
+            kwargs=dict(
+                base_model_id=model_id,
+                gpu_id=gpu_id,
+                gpu_memory_utilization=float(vllm_gpu_memory_utilization),
+                dtype="bfloat16",
+            ),
+            daemon=False,
+        )
+        vllm_proc.start()
+        logger.info("Started vLLM rollout worker on GPU %s (pid=%s)", gpu_id, vllm_proc.pid)
 
     # Optimizer & Scheduler
     decay_params, no_decay_params = [], []
@@ -431,21 +460,22 @@ def train_policy_gradient(
 
     # Main Loop
     update_step = 0
-    start_time = time.perf_counter()
     ptr = 0  # pointer into training prompts
     N = len(train_prompts_chat)
     assert N > 0, "No training prompts"
 
     while update_step < total_update_steps:
-        # send policy weights to vllm worker
-        ckpt_dir_vllm = save_policy_checkpoint_for_vllm(
-            policy,
-            update_step,
-            out_root="/dev/shm",
-            base="qwen15b_step",
-            dtype=torch.bfloat16,
-            logger=logger,
-        )
+        start_time = time.perf_counter()
+        if not replay_path:
+            # send policy weights to vllm worker
+            ckpt_dir_vllm = save_policy_checkpoint_for_vllm(
+                policy,
+                update_step,
+                out_root="/dev/shm",
+                base="qwen15b_step",
+                dtype=torch.bfloat16,
+                logger=logger,
+            )
         # ---- collect rollouts up to the target update size ----
         ep_since = 0
         toks_since = 0
@@ -461,26 +491,84 @@ def train_policy_gradient(
         while ep_since < episodes_per_update and (
             soft_token_cap_per_update is None or toks_since < soft_token_cap_per_update
         ):
-            # Select a chunk of unique prompts; each will be replicated K times in the worker
-            episodes_left = episodes_per_update - ep_since
-            prompts_left = max(1, episodes_left // group_size)
-            take_prompts = min(vllm_prompts_per_batch, prompts_left)
+            if replay_path:
+                if pack is None:
+                    raise RuntimeError("Replay mode active but no replay batch loaded.")
+                # Extract repeated prompts/answers
+                responses = list(pack["responses"])
+                prompts_rep = pack["prompts"]
+                gold_repeated = pack["answers"]
+            else:
+                # Select a chunk of unique prompts; each will be replicated K times in the worker
+                episodes_left = episodes_per_update - ep_since
+                prompts_left = max(1, episodes_left // group_size)
+                take_prompts = min(vllm_prompts_per_batch, prompts_left)
 
-            if ptr >= N:
-                ptr = 0  # wrap-around epoching
-            end = min(N, ptr + take_prompts)
-            prompts_mb = train_prompts_chat[ptr:end]
-            golds_mb = train_gold_nums[ptr:end]
-            ptr = end
-            if not prompts_mb:
-                break
+                if ptr >= N:
+                    ptr = 0  # wrap-around epoching
+                end = min(N, ptr + take_prompts)
+                prompts_mb = train_prompts_chat[ptr:end]
+                golds_mb = train_gold_nums[ptr:end]
+                ptr = end
+                if not prompts_mb:
+                    break
 
-            # Rollout via vLLM worker
-            result = _rollout_with_vllm(
-                update_step, prompts_mb, golds_mb, group_size, ckpt_dir_vllm
-            )
-            responses = result["responses"]  # length = len(prompts_mb) * group_size
-            gold_repeated = result["answers"]
+                # Rollout via vLLM worker
+                result = _rollout_with_vllm(
+                    update_step,
+                    prompts_mb,
+                    golds_mb,
+                    group_size,
+                    ckpt_dir_vllm,
+                )
+                responses = result["responses"]  # length = len(prompts_mb) * group_size
+                gold_repeated = result["answers"]
+                # Build repeated prompts for tokenization
+                prompts_rep = [p for p in prompts_mb for _ in range(group_size)]
+
+                # If we are in "record" mode, save and exit immediately after the first rollout
+                if record_replay_path:
+                    try:
+                        out_path = Path(record_replay_path)
+                        out_path.parent.mkdir(parents=True, exist_ok=True)
+                        torch.save(
+                            {
+                                "prompts": prompts_rep,
+                                "answers": gold_repeated,
+                                "responses": responses,
+                                "group_size": group_size,
+                                "max_new_tokens": max_new_tokens,
+                                "temperature": temperature,
+                                "top_p": top_p,
+                                "step": int(update_step),
+                                "model_id": model_id,
+                            },
+                            str(out_path),
+                        )
+                        logger.info(
+                            "Saved replay batch to %s; shutting down and exiting.", out_path
+                        )
+                    finally:
+                        # Graceful shutdown of vLLM worker before return
+                        try:
+                            jobs_q.put_nowait(None)
+                        except Exception:
+                            pass
+                        try:
+                            vllm_proc.join(timeout=60.0)
+                            if vllm_proc.is_alive():
+                                vllm_proc.terminate()
+                                vllm_proc.join(timeout=10.0)
+                        except Exception:
+                            pass
+                        try:
+                            results_q.close()
+                            results_q.cancel_join_thread()
+                            jobs_q.close()
+                            jobs_q.cancel_join_thread()
+                        except Exception:
+                            pass
+                    return
 
             # Rewards & (group) advantages
             adv, raw, fmt, ans = compute_group_normalized_rewards(
@@ -497,11 +585,10 @@ def train_policy_gradient(
             ans_stats.update_batch(ans)
 
             # Tokenize concatenated prompts + responses
-            prompts_rep = [p for p in prompts_mb for _ in range(group_size)]
-            pack = _tokenize_concat_build_mask(prompts_rep, responses)
-            input_ids_full = pack["input_ids"]
-            attn_full = pack["attention_mask"]
-            resp_mask_full = pack["response_mask"]
+            tok_pack = _tokenize_concat_build_mask(prompts_rep, responses)
+            input_ids_full = tok_pack["input_ids"]
+            attn_full = tok_pack["attention_mask"]
+            resp_mask_full = tok_pack["response_mask"]
 
             # B is the number of episodes *in one vLLM batch*
             B = input_ids_full.size(0)
@@ -522,7 +609,7 @@ def train_policy_gradient(
                 for s in range(0, B, trainer_episodes_per_mb):
                     e = min(B, s + trainer_episodes_per_mb)
 
-                    # slice vLLM rollouts
+                    # slice the rollouts to microbatch size
                     input_ids = input_ids_full[s:e]
                     attn = attn_full[s:e]
                     resp_mask = resp_mask_full[s:e]
@@ -550,11 +637,10 @@ def train_policy_gradient(
 
                     # update tallies
                     toks = int(resp_mask.sum().item())
-                    ep_since += policy_logp.size(0)
                     toks_since += toks
 
                     # Entropy top-k for monitoring (no grad)
-                    if entropy_topk and entropy_topk > 0:
+                    if entropy_topk and entropy_topk > 0 and toks > 0:
                         with torch.no_grad():
                             vals, _ = logits.topk(entropy_topk, dim=-1)
                             lse = vals.logsumexp(dim=-1, keepdim=True)
@@ -587,6 +673,12 @@ def train_policy_gradient(
                         old_log_probs=old_logp,  # (b,t)
                         cliprange=cliprange,
                     )
+
+                    # Accumulate episodes that actually contributed to grads
+                    ep_used_mb = int(
+                        meta.get("episodes_used", torch.tensor(policy_logp.size(0))).item()
+                    )
+                    ep_since += ep_used_mb
 
                     # logging pieces
                     if "importance_wts" in meta:
@@ -682,8 +774,13 @@ def train_policy_gradient(
             )
         wandb.log(metrics)
 
-        # Periodic async eval
-        if eval_every and (update_step % eval_every == 0) and val_data_path is not None:
+        # Periodic async eval (skip in replay mode since vLLM is not active)
+        if (
+            (not replay_path)
+            and eval_every
+            and (update_step % eval_every == 0)
+            and val_data_path is not None
+        ):
             kgen = -1
             if eval_examples:
                 kgen = max(1, min(int(eval_examples), len(eval_prompts_chat)))
