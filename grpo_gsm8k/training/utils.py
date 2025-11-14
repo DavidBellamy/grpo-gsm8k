@@ -6,6 +6,7 @@ import math
 import os
 import shutil
 import statistics
+import sys
 import time
 from multiprocessing import Queue
 from pathlib import Path
@@ -442,6 +443,36 @@ def save_policy_checkpoint_for_vllm(
     ready.touch()
     if logger:
         logger.info("Wrote vLLM checkpoint: %s", final_dir)
+
+    # Keep only the 5 latest checkpoints (by step)
+    try:
+        ckpts: list[tuple[int, Path]] = []
+        for p in out_root.glob(f"{base}_*"):
+            # Skip tmp dirs and non-dirs
+            if p.suffix == ".tmp" or not p.is_dir():
+                continue
+            name = p.name
+            # Expect "{base}_{step}"
+            try:
+                step_str = name.rsplit("_", 1)[1]
+                step_i = int(step_str)
+            except Exception:
+                continue
+            ckpts.append((step_i, p))
+
+        ckpts.sort(key=lambda x: x[0], reverse=True)
+        for _, p in ckpts[5:]:
+            try:
+                shutil.rmtree(p)
+                if logger:
+                    logger.info("Removed old vLLM checkpoint: %s", p)
+            except Exception as e:
+                if logger:
+                    logger.warning("Failed to remove old checkpoint %s: %s", p, e)
+    except Exception as e:
+        if logger:
+            logger.warning("Error while pruning old checkpoints: %s", e)
+
     return final_dir
 
 
@@ -488,3 +519,31 @@ class RunningStats:
             "min": self.vmin if self.n else 0.0,
             "max": self.vmax if self.n else 0.0,
         }
+
+
+def setup_logging(log_path: str = "logs/train.log", level: int = logging.INFO) -> None:
+    Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+
+    fmt = "%(asctime)s %(levelname)s [%(processName)s:%(threadName)s] %(name)s: %(message)s"
+    datefmt = "%Y-%m-%d %H:%M:%S"
+
+    # Root logger
+    root = logging.getLogger()
+    root.setLevel(level)
+
+    # Remove default handlers if basicConfig already ran
+    for h in list(root.handlers):
+        root.removeHandler(h)
+
+    # Console
+    ch = logging.StreamHandler(sys.stdout)
+    ch.setLevel(level)
+    ch.setFormatter(logging.Formatter(fmt, datefmt))
+
+    # File
+    fh = logging.FileHandler(log_path, encoding="utf-8")
+    fh.setLevel(level)
+    fh.setFormatter(logging.Formatter(fmt, datefmt))
+
+    root.addHandler(ch)
+    root.addHandler(fh)

@@ -24,9 +24,12 @@ from grpo_gsm8k.training.utils import (
     resolve_resume_path,
     sanitize_wandb_component,
     save_policy_checkpoint_for_vllm,
+    setup_logging,
     vllm_worker_persistent,
 )
+from grpo_gsm8k.utils.memprobe import mem_region, mem_snapshot
 
+setup_logging("logs/pg_train.log")
 logger = logging.getLogger(__name__)
 
 
@@ -217,7 +220,7 @@ def train_policy_gradient(
     vllm_gpu_memory_utilization: float = 0.85,
     vllm_prompts_per_batch: int = 64,
     # Rollout / grouping
-    group_size: int = 8,  # K samples per prompt (GRPO group)
+    group_size: int = 1,  # K samples per prompt (GRPO group)
     episodes_per_update: int = 256,  # target episodes before each optimizer.step()
     soft_token_cap_per_update: int | None = 1_000_000,
     trainer_episodes_per_mb: int = 8,
@@ -260,6 +263,13 @@ def train_policy_gradient(
       - optimizer step after accumulating a target number of episodes
     """
     assert episodes_per_update % group_size == 0, "group_size must divide episodes_per_update."
+    assert (
+        trainer_episodes_per_mb >= group_size
+    ), "trainer_episodes_per_mb must be larger than group_size"
+    assert (
+        trainer_episodes_per_mb % group_size == 0
+    ), "group_size must divide trainer_episodes_per_mb"
+
     # Replay/record guard
     if replay_path is not None and record_replay_path is not None:
         raise ValueError("Only one of replay_path or record_replay_path may be set.")
@@ -404,34 +414,65 @@ def train_policy_gradient(
 
     # Helpers
     def _tokenize_concat_build_mask(
-        prompts: list[str], responses: list[str]
+        prompts: list[str],
+        responses: list[str],
+        T_cap: int,
     ) -> dict[str, torch.Tensor]:
-        """Tokenize [prompt || response]; build response_mask over the response span only."""
+        """
+        Tokenize [prompt || response]; cap response to T_cap (trainer tokens),
+        then build attention_mask and response_mask.
+        """
+        # Tokenize prompts alone to locate the boundary (no padding)
         enc_prompt = tok(prompts, add_special_tokens=False, return_tensors=None)
+        prompt_ids_list: list[list[int]] = enc_prompt["input_ids"]
+
+        # Tokenize full strings without padding/truncation to preserve merges
         enc_full = tok(
             [p + r for p, r in zip(prompts, responses)],
             add_special_tokens=False,
-            padding=True,
-            truncation=True,
-            return_tensors="pt",
+            padding=False,
+            truncation=False,
+            return_tensors=None,
         )
-        input_ids = enc_full["input_ids"]  # (B, T)
-        attention_mask = enc_full["attention_mask"]  # (B, T)
+        full_ids_list: list[list[int]] = enc_full["input_ids"]
 
-        # Compute response spans
-        prompt_lens = [len(x) for x in enc_prompt["input_ids"]]  # per-example
-        B, T = input_ids.shape
-        resp_mask = torch.zeros((B, T), dtype=torch.long)
-        for i, pl in enumerate(prompt_lens):
-            # The final length after padding is attention_mask[i].sum()
-            seq_len = int(attention_mask[i].sum().item())
-            # response tokens are positions [pl : seq_len)
-            start = min(pl, seq_len)
-            resp_mask[i, start:seq_len] = 1
+        # Cap response by index: keep at most prompt_len + T_cap tokens
+        capped_ids = []
+        resp_masks = []
+        for p_ids, full_ids in zip(prompt_ids_list, full_ids_list):
+            p_len = len(p_ids)
+            keep_len = min(len(full_ids), p_len + T_cap)
+            ids = full_ids[:keep_len]
+            capped_ids.append(ids)
+
+            # response_mask: 0..p_len-1 -> 0, p_len..keep_len-1 -> 1
+            m = [0] * keep_len
+            for j in range(p_len, keep_len):
+                m[j] = 1
+            resp_masks.append(m)
+
+        # Left-pad to this microbatch's max length (match tok.padding_side='left')
+        pad_id = tok.pad_token_id
+        assert pad_id is not None, "pad_token_id must be set on tokenizer"
+
+        T_mb = max(len(x) for x in capped_ids) if capped_ids else 0
+
+        def left_pad(seq: list[int], T: int, pad_val: int) -> list[int]:
+            pad = T - len(seq)
+            return ([pad_val] * pad) + seq if pad > 0 else seq[:T]
+
+        input_ids = torch.tensor(
+            [left_pad(seq, T_mb, pad_id) for seq in capped_ids], dtype=torch.long
+        )
+        attention_mask = torch.tensor(
+            [left_pad([1] * len(seq), T_mb, 0) for seq in capped_ids], dtype=torch.long
+        )
+        response_mask = torch.tensor([left_pad(m, T_mb, 0) for m in resp_masks], dtype=torch.long)
+
         return {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "response_mask": resp_mask,
+            "input_ids": input_ids,  # (B, T_mb)
+            "attention_mask": attention_mask,  # (B, T_mb) 1=real, 0=pad
+            "response_mask": response_mask,  # (B, T_mb) 1=response, 0=prompt/pad
         }
 
     def _rollout_with_vllm(
@@ -521,6 +562,9 @@ def train_policy_gradient(
                     group_size,
                     ckpt_dir_vllm,
                 )
+                with mem_region("AFTER_ROLLOUT_FETCH"):
+                    pass
+
                 responses = result["responses"]  # length = len(prompts_mb) * group_size
                 gold_repeated = result["answers"]
                 # Build repeated prompts for tokenization
@@ -548,8 +592,7 @@ def train_policy_gradient(
                         logger.info(
                             "Saved replay batch to %s; shutting down and exiting.", out_path
                         )
-                    finally:
-                        # Graceful shutdown of vLLM worker before return
+                    finally:  # Graceful shutdown of vLLM worker before return
                         try:
                             jobs_q.put_nowait(None)
                         except Exception:
@@ -584,116 +627,146 @@ def train_policy_gradient(
             fmt_stats.update_batch(fmt)
             ans_stats.update_batch(ans)
 
-            # Tokenize concatenated prompts + responses
-            tok_pack = _tokenize_concat_build_mask(prompts_rep, responses)
-            input_ids_full = tok_pack["input_ids"]
-            attn_full = tok_pack["attention_mask"]
-            resp_mask_full = tok_pack["response_mask"]
-
             # B is the number of episodes *in one vLLM batch*
-            B = input_ids_full.size(0)
+            B = len(prompts_rep)
 
-            # Make teacher-forcing labels
-            next_ids_full = torch.roll(input_ids_full, shifts=-1, dims=1)
-            next_ids_full[:, -1] = tok.pad_token_id
-            label_mask = resp_mask_full.bool() & attn_full.bool()  # (B, T)
-            labels_full = input_ids_full.new_full(input_ids_full.shape, -100)
-            labels_full[label_mask] = next_ids_full[label_mask]
+            with mem_region(f"UPDATE_{update_step:04d}_BEGIN"):
+                torch.cuda.reset_peak_memory_stats()
+                with tqdm(
+                    total=B,
+                    desc=f"episodes (upd {update_step})",
+                    unit="ep",
+                    leave=False,
+                ) as pbar:
+                    for i, s in enumerate(range(0, B, trainer_episodes_per_mb)):
+                        e = min(B, s + trainer_episodes_per_mb)
 
-            with tqdm(
-                total=B,
-                desc=f"episodes (upd {update_step})",
-                unit="ep",
-                leave=False,
-            ) as pbar:
-                for s in range(0, B, trainer_episodes_per_mb):
-                    e = min(B, s + trainer_episodes_per_mb)
+                        with mem_region(f"MB_{i:02d}_H2D"):
+                            prompts_mb = prompts_rep[s:e]
+                            resp_mb = responses[s:e]
 
-                    # slice the rollouts to microbatch size
-                    input_ids = input_ids_full[s:e]
-                    attn = attn_full[s:e]
-                    resp_mask = resp_mask_full[s:e]
-                    labels = labels_full[s:e]
+                            # Tokenize concatenated prompts + responses
+                            tok_pack = _tokenize_concat_build_mask(
+                                prompts_mb,
+                                resp_mb,
+                                max_new_tokens,
+                            )
+                            input_ids = tok_pack["input_ids"]
+                            attn = tok_pack["attention_mask"]
+                            resp_mask = tok_pack["response_mask"]
 
-                    # move slices to GPU
-                    input_ids = input_ids.to(device_t, non_blocking=True)
-                    attn = attn.to(device_t, non_blocking=True)
-                    resp_mask = resp_mask.to(device_t, non_blocking=True)
-                    labels = labels.to(device_t, non_blocking=True)
+                            # Make teacher-forcing labels
+                            next_ids_full = torch.roll(input_ids, shifts=-1, dims=1)
+                            next_ids_full[:, -1] = tok.pad_token_id
+                            label_mask = resp_mask.bool() & attn.bool()  # (B, T)
+                            labels = input_ids.new_full(input_ids.shape, -100)
+                            labels[label_mask] = next_ids_full[label_mask]
 
-                    # Per-token NLL without materializing softmax
-                    logits = policy(input_ids, attn).logits  # (b,t,V)
-                    import torch.nn.functional as F
-
-                    nll = F.cross_entropy(
-                        logits.view(-1, logits.size(-1)),
-                        labels.view(-1),
-                        reduction="none",
-                        ignore_index=-100,  # ignore prompt tokens
-                    ).view_as(labels)
-
-                    policy_logp = -nll  # (b, t)
-                    old_logp = policy_logp.detach()  # for proximal updates e.g. GRPO-clip
-
-                    # update tallies
-                    toks = int(resp_mask.sum().item())
-                    toks_since += toks
-
-                    # Entropy top-k for monitoring (no grad)
-                    if entropy_topk and entropy_topk > 0 and toks > 0:
-                        with torch.no_grad():
-                            vals, _ = logits.topk(entropy_topk, dim=-1)
-                            lse = vals.logsumexp(dim=-1, keepdim=True)
-                            p = (vals - lse).exp()
-                            ent = -(p * (vals - lse)).sum(dim=-1)  # (b,t)
-                            sum_entropy += (
-                                float(masked_mean(ent, resp_mask.to(ent.dtype)).item()) * toks
+                            # Log microbatch shape
+                            T_mb = int(attn.sum(1).max().item())  # longest non-pad seq
+                            tokens_mb = int(resp_mask.sum().item())
+                            logger.info(
+                                f"[upd {update_step} mb \
+                                    {i:02d}] B={input_ids.size(0)} T={T_mb} tokens={tokens_mb}"
                             )
 
-                    # choose advantage vs. reward slice for this chunk
-                    adv_chunk = None
-                    rew_chunk = None
-                    if loss_type in ("reinforce_with_baseline", "grpo_clip"):
-                        adv_chunk = (
-                            adv[s:e].to(device_t, dtype=policy_logp.dtype).unsqueeze(-1)
-                        )  # (b,1)
-                    if loss_type == "no_baseline":
-                        rew_chunk = (
-                            raw[s:e].to(device_t, dtype=policy_logp.dtype).unsqueeze(-1)
-                        )  # (b,1)
+                            # H2D
+                            input_ids = input_ids.pin_memory().to(device_t, non_blocking=True)
+                            attn = attn.pin_memory().to(device_t, non_blocking=True)
+                            resp_mask = resp_mask.pin_memory().to(device_t, non_blocking=True)
+                            labels = labels.pin_memory().to(device_t, non_blocking=True)
 
-                    # one backward per chunk (grad accumulation)
-                    _, meta = policy_gradient_microbatch_train_step(
-                        policy_log_probs=policy_logp,  # (b,t)
-                        response_mask=resp_mask,  # (b,t)
-                        episodes_per_update=episodes_per_update,
-                        loss_type=loss_type,
-                        raw_rewards=rew_chunk,
-                        advantages=adv_chunk,
-                        old_log_probs=old_logp,  # (b,t)
-                        cliprange=cliprange,
-                    )
+                            torch.cuda.synchronize()
 
-                    # Accumulate episodes that actually contributed to grads
-                    ep_used_mb = int(
-                        meta.get("episodes_used", torch.tensor(policy_logp.size(0))).item()
-                    )
-                    ep_since += ep_used_mb
+                        with mem_region(f"MB_{i:02d}_FWD_BWD"):
+                            # Per-token NLL without materializing softmax
+                            logits = policy(input_ids, attn).logits  # (b,t,V)
+                            import torch.nn.functional as F
 
-                    # logging pieces
-                    if "importance_wts" in meta:
-                        w = meta["importance_wts"]
-                        cw = meta.get("clipped_wts", None)
-                        sum_ratio += float(w.mean().item())
-                        if cw is not None:
-                            sum_ratio_clipped += float((w.ne(cw)).float().mean().item())
-                            clip_frac_cnt += 1
+                            nll = F.cross_entropy(
+                                logits.view(-1, logits.size(-1)),
+                                labels.view(-1),
+                                reduction="none",
+                                ignore_index=-100,  # ignore prompt tokens
+                            ).view_as(labels)
 
-                    # free big tensors ASAP
-                    del logits, nll, policy_logp, old_logp, input_ids, attn, labels, resp_mask
+                            policy_logp = -nll  # (b, t)
+                            old_logp = policy_logp.detach()  # for proximal updates e.g. GRPO-clip
 
-                    pbar.update(e - s)
+                            # update tallies
+                            toks = int(resp_mask.sum().item())
+                            toks_since += toks
 
+                            # Entropy top-k for monitoring (no grad)
+                            if entropy_topk and entropy_topk > 0 and toks > 0:
+                                with torch.no_grad():
+                                    vals, _ = logits.topk(entropy_topk, dim=-1)
+                                    lse = vals.logsumexp(dim=-1, keepdim=True)
+                                    p = (vals - lse).exp()
+                                    ent = -(p * (vals - lse)).sum(dim=-1)  # (b,t)
+                                    sum_entropy += (
+                                        float(masked_mean(ent, resp_mask.to(ent.dtype)).item())
+                                        * toks
+                                    )
+
+                            # choose advantage vs. reward slice for this chunk
+                            adv_chunk = None
+                            rew_chunk = None
+                            if loss_type in ("reinforce_with_baseline", "grpo_clip"):
+                                adv_chunk = (
+                                    adv[s:e].to(device_t, dtype=policy_logp.dtype).unsqueeze(-1)
+                                )  # (b,1)
+                            if loss_type == "no_baseline":
+                                rew_chunk = (
+                                    raw[s:e].to(device_t, dtype=policy_logp.dtype).unsqueeze(-1)
+                                )  # (b,1)
+
+                            # one backward per chunk (grad accumulation)
+                            _, meta = policy_gradient_microbatch_train_step(
+                                policy_log_probs=policy_logp,  # (b,t)
+                                response_mask=resp_mask,  # (b,t)
+                                episodes_per_update=episodes_per_update,
+                                loss_type=loss_type,
+                                raw_rewards=rew_chunk,
+                                advantages=adv_chunk,
+                                old_log_probs=old_logp,  # (b,t)
+                                cliprange=cliprange,
+                            )
+
+                            # Accumulate episodes that actually contributed to grads
+                            ep_used_mb = int(
+                                meta.get("episodes_used", torch.tensor(policy_logp.size(0))).item()
+                            )
+                            ep_since += ep_used_mb
+
+                            # logging pieces
+                            if "importance_wts" in meta:
+                                w = meta["importance_wts"]
+                                cw = meta.get("clipped_wts", None)
+                                sum_ratio += float(w.mean().item())
+                                if cw is not None:
+                                    sum_ratio_clipped += float((w.ne(cw)).float().mean().item())
+                                    clip_frac_cnt += 1
+
+                            # free big tensors
+                            del (
+                                logits,
+                                nll,
+                                policy_logp,
+                                old_logp,
+                                input_ids,
+                                attn,
+                                labels,
+                                resp_mask,
+                                adv_chunk,
+                                rew_chunk,
+                            )
+                            torch.cuda.synchronize()
+
+                        pbar.update(e - s)
+
+                mem_snapshot("MB_LOOP_END_RAW")
+                torch.cuda.synchronize()
             del adv, raw, fmt, ans
 
         # Optimizer Step
@@ -724,8 +797,11 @@ def train_policy_gradient(
                         sq += p.grad.detach().float().pow(2).sum().item()
                 global_grad_l2_postclip = float(sq**0.5)
 
+        mem_snapshot("BEFORE_OPT_STEP")
         optimizer.step()
+        mem_snapshot("AFTER_OPT_STEP")
         optimizer.zero_grad(set_to_none=True)
+        mem_snapshot("AFTER_ZERO_GRAD")
         update_step += 1
         try:
             scheduler.step()

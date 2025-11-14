@@ -19,7 +19,7 @@ adamw_beta2: 0.95
 adamw_eps: 1e-8
 weight_decay: 0.0
 max_grad_norm: 1.0
-total_update_steps: 200
+total_update_steps: 300
 # Policy gradient loss type
 loss_type: grpo_clip
 cliprange: 0.2
