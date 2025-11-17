@@ -1,11 +1,12 @@
 model_path: Qwen/Qwen2.5-Math-1.5B
-eval_suites: [all]
+eval_suites: [gsm8k]  # options: gsm8k, lm_eval, all
 limit: null
 output_dir: ./artifacts/eval
 
 gsm8k_eval_path: artifacts/gsm8k/test.jsonl
 gsm8k_max_tokens: 2048
-gsm8k_k_shot: 8
+gsm8k_k_shot: 0
+gsm8k_bootstrap_samples: 1000  # costs little time/compute
 
 lm_eval_tasks:
   - hendrycks_math
@@ -19,5 +20,8 @@ lm_eval_fewshot: 4
 lm_eval_batch_size: 8
 lm_eval_max_tokens: 2048
 
+# vLLM args
 tp_size: 1
 gpu_mem_util: 0.92
+temperature: 1.0  # match to train config
+top_p: 1.0  # match to train config

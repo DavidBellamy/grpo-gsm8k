@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import csv
 import json
 import logging
@@ -261,11 +260,13 @@ def run_gsm8k_eval(
     eval_path: str,
     limit: int | None,
     max_new_tokens: int,
+    temperature: float,
+    top_p: float,
     k_shot: int,
     server_host: str = "127.0.0.1",
     server_port: int = 8000,
     tokenizer_path: str | None = None,
-    bootstrap_samples: int = 10,
+    bootstrap_samples: int = 1000,
     ci_alpha: float = 0.05,
 ) -> dict[str, Any]:
     """Run GSM8K evaluation using vLLM server."""
@@ -324,8 +325,8 @@ def run_gsm8k_eval(
                 "model": model_path,
                 "prompt": prompt,
                 "max_tokens": max_new_tokens,
-                "temperature": 0.0,
-                "top_p": 1.0,
+                "temperature": temperature,
+                "top_p": top_p,
                 "stream": False,
             },
             timeout=600,
@@ -512,6 +513,9 @@ def main(
     # vLLM args
     tp_size: int = 1,
     gpu_mem_util: float = 0.92,
+    *,
+    temperature: float,
+    top_p: float,
 ) -> dict[str, Any]:
     """Run evaluation suite with shared vLLM server."""
 
@@ -594,6 +598,8 @@ def main(
                     eval_path=gsm8k_eval_path,
                     limit=limit,
                     max_new_tokens=gsm8k_max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
                     k_shot=gsm8k_k_shot,
                     server_host=server.host,
                     server_port=server.port,
@@ -1083,76 +1089,3 @@ def run_lm_eval(
 
     logger.info(f"Loaded results from {results_file}")
     return raw.get("results", {})
-
-
-if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
-
-    parser = argparse.ArgumentParser(
-        description="Evaluation suite for GSM8K and lm-eval benchmarks"
-    )
-
-    # Model and output args
-    parser.add_argument(
-        "--model_path",
-        type=str,
-        default="Qwen/Qwen2.5-Math-1.5B",
-        help="HuggingFace model repo or local checkpoint directory",
-    )
-    parser.add_argument(
-        "--eval_suites",
-        nargs="+",
-        default=["all"],
-        help="Evaluation suites to run: 'all', 'gsm8k', 'lm_eval', or specific task names",
-    )
-    parser.add_argument("--limit", type=int, help="Limit number of examples per evaluation")
-    parser.add_argument("--output_dir", type=str, default="./artifacts/eval")
-
-    # W&B args
-    parser.add_argument("--wandb_project", type=str, default="grpo-gsm8k")
-    parser.add_argument("--run_name", type=str, help="W&B run name")
-
-    # GSM8K specific args
-    parser.add_argument("--gsm8k_eval_path", type=str, default="artifacts/gsm8k/test.jsonl")
-    parser.add_argument("--gsm8k_max_tokens", type=int, default=1024)
-    parser.add_argument("--gsm8k_k_shot", type=int, default=8)
-    parser.add_argument(
-        "--gsm8k_bootstrap_samples",
-        type=int,
-        default=10,
-        help="Number of bootstrap resamples for CI over GSM8K metrics",
-    )
-    parser.add_argument(
-        "--gsm8k_ci_alpha",
-        type=float,
-        default=0.05,
-        help="Alpha for GSM8K bootstrap CI (0.05 -> 95% CI)",
-    )
-
-    # lm-eval specific args
-    parser.add_argument(
-        "--lm_eval_tasks",
-        nargs="+",
-        default=[
-            "hendrycks_math",
-            "mmlu",
-            "arc_challenge",
-            "hellaswag",
-            "winogrande",
-            "truthfulqa_mc2",
-            "wikitext",
-        ],
-    )
-    parser.add_argument("--lm_eval_fewshot", type=int, default=4)
-    parser.add_argument("--lm_eval_batch_size", type=int, default=8)
-    parser.add_argument("--lm_eval_max_tokens", type=int, default=2048)
-
-    # vLLM args
-    parser.add_argument("--tp_size", type=int, default=1)
-    parser.add_argument("--gpu_mem_util", type=float, default=0.92)
-
-    args = parser.parse_args()
-    main(**vars(args))
