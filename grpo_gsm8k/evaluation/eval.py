@@ -4,6 +4,7 @@ import csv
 import json
 import logging
 import math
+import os
 import random
 import re
 import subprocess
@@ -268,6 +269,8 @@ def run_gsm8k_eval(
     tokenizer_path: str | None = None,
     bootstrap_samples: int = 1000,
     ci_alpha: float = 0.05,
+    shard_id: int = 0,
+    num_shards: int = 1,
 ) -> dict[str, Any]:
     """Run GSM8K evaluation using vLLM server."""
     logger.info("Running GSM8K evaluation")
@@ -290,6 +293,17 @@ def run_gsm8k_eval(
     if limit:
         data = data[:limit]
         logger.info(f"Limited to {len(data)} examples")
+
+    # Shard data across workers
+    total_n = len(data)
+    if num_shards > 1:
+        if not (0 <= shard_id < num_shards):
+            raise ValueError(f"shard_id {shard_id} must be in [0, {num_shards})")
+        data = [ex for i, ex in enumerate(data) if i % num_shards == shard_id]
+        logger.info(
+            f"[gsm8k] shard_id={shard_id}/{num_shards} "
+            f"total_before={total_n} total_after_shard={len(data)}"
+        )
 
     questions = [d["question"] for d in data]
 
@@ -494,453 +508,6 @@ def run_gsm8k_eval(
     }
 
 
-def main(
-    model_path: str = "Qwen/Qwen2.5-Math-1.5B",
-    eval_suites: list[str] | None = None,
-    limit: int | None = None,
-    output_dir: str = "./artifacts/eval",
-    # GSM8K specific args
-    gsm8k_eval_path: str = "artifacts/gsm8k/test.jsonl",
-    gsm8k_max_tokens: int = 1024,
-    gsm8k_k_shot: int = 8,
-    gsm8k_bootstrap_samples: int = 10,
-    gsm8k_ci_alpha: float = 0.05,
-    # lm-eval specific args
-    lm_eval_tasks: list[str] | None = None,
-    lm_eval_fewshot: int = 4,
-    lm_eval_batch_size: int = 8,
-    lm_eval_max_tokens: int = 2048,
-    # vLLM args
-    tp_size: int = 1,
-    gpu_mem_util: float = 0.92,
-    *,
-    temperature: float,
-    top_p: float,
-) -> dict[str, Any]:
-    """Run evaluation suite with shared vLLM server."""
-
-    # Default eval suites
-    if eval_suites is None:
-        eval_suites = ["all"]
-
-    # Default lm-eval tasks
-    if lm_eval_tasks is None:
-        lm_eval_tasks = [
-            "hendrycks_math",
-            "mmlu",
-            "arc_challenge",
-            "hellaswag",
-            "winogrande",
-            "truthfulqa_mc2",
-            "wikitext",
-        ]
-
-    # Determine if model is local checkpoint or HF repo
-    model_path_obj = Path(model_path)
-    is_local_checkpoint = model_path_obj.exists() and model_path_obj.is_dir()
-
-    # For local checkpoints, try to find the base model for tokenizer
-    tokenizer_path = model_path
-    if is_local_checkpoint:
-        logger.info(f"Using local checkpoint: {model_path}")
-
-        # Try to find base model info for tokenizer
-        config_file = model_path_obj / "config.json"
-        if config_file.exists():
-            try:
-                with config_file.open(encoding="utf-8") as f:
-                    config = json.load(f)
-                # Look for common base model identifiers
-                base_model_candidates = [
-                    config.get("_name_or_path"),
-                    config.get("base_model_name_or_path"),
-                    config.get("model_name_or_path"),
-                ]
-                for candidate in base_model_candidates:
-                    if candidate and "/" in candidate and not Path(candidate).exists():
-                        # This looks like a HF model name, use it for tokenizer
-                        tokenizer_path = candidate
-                        logger.info(f"Using base model for tokenizer: {tokenizer_path}")
-                        break
-            except Exception as e:
-                logger.warning(f"Could not read config for base model info: {e}")
-
-    else:
-        logger.info(f"Using HuggingFace model: {model_path}")
-
-    # Log evaluation configuration
-    logger.info("Evaluation configuration:")
-    logger.info(f"  Model: {model_path}")
-    logger.info(f"  Tokenizer: {tokenizer_path}")
-    logger.info(f"  Eval suites: {eval_suites}")
-    logger.info(f"  Limit: {limit}")
-
-    output_path = Path(output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    all_results = {}
-
-    try:
-        # Determine what evaluations to run
-        run_gsm8k = "all" in eval_suites or "gsm8k" in eval_suites
-        run_lm_eval_suites = (
-            "all" in eval_suites
-            or "lm_eval" in eval_suites
-            or any(task in eval_suites for task in lm_eval_tasks)
-        )
-
-        # Use shared vLLM server for all evaluations
-        with VLLMServerManager(model_path, tp_size=tp_size, gpu_mem_util=gpu_mem_util) as server:
-            # Run GSM8K if requested
-            if run_gsm8k:
-                gsm8k_results = run_gsm8k_eval(
-                    model_path=model_path,
-                    eval_path=gsm8k_eval_path,
-                    limit=limit,
-                    max_new_tokens=gsm8k_max_tokens,
-                    temperature=temperature,
-                    top_p=top_p,
-                    k_shot=gsm8k_k_shot,
-                    server_host=server.host,
-                    server_port=server.port,
-                    tokenizer_path=tokenizer_path,
-                    bootstrap_samples=gsm8k_bootstrap_samples,
-                    ci_alpha=gsm8k_ci_alpha,
-                )
-                all_results.update(gsm8k_results)
-
-                # Log GSM8K results to W&B
-                wandb.log(
-                    {
-                        "metrics/gsm8k_pass@1": gsm8k_results["gsm8k_pass@1"],
-                        "metrics/gsm8k_n_examples": gsm8k_results["gsm8k_n_examples"],
-                        "metrics/gsm8k_pass@1_ci_lower": gsm8k_results.get(
-                            "gsm8k_pass@1_ci_lower", 0.0
-                        ),
-                        "metrics/gsm8k_pass@1_ci_upper": gsm8k_results.get(
-                            "gsm8k_pass@1_ci_upper", 0.0
-                        ),
-                        "metrics/gsm8k_completion_len_p50": gsm8k_results.get(
-                            "gsm8k_completion_len_p50", 0.0
-                        ),
-                        "metrics/gsm8k_completion_len_p95": gsm8k_results.get(
-                            "gsm8k_completion_len_p95", 0.0
-                        ),
-                        "metrics/gsm8k_truncation_rate": gsm8k_results.get(
-                            "gsm8k_truncation_rate", 0.0
-                        ),
-                        "metrics/gsm8k_format_error_rate": gsm8k_results.get(
-                            "gsm8k_format_error_rate", 0.0
-                        ),
-                        "metrics/gsm8k_logic_error_rate": gsm8k_results.get(
-                            "gsm8k_logic_error_rate", 0.0
-                        ),
-                        "metrics/gsm8k_completion_len_p50_ci_lower": gsm8k_results.get(
-                            "gsm8k_completion_len_p50_ci_lower", 0.0
-                        ),
-                        "metrics/gsm8k_completion_len_p50_ci_upper": gsm8k_results.get(
-                            "gsm8k_completion_len_p50_ci_upper", 0.0
-                        ),
-                        "metrics/gsm8k_completion_len_p95_ci_lower": gsm8k_results.get(
-                            "gsm8k_completion_len_p95_ci_lower", 0.0
-                        ),
-                        "metrics/gsm8k_completion_len_p95_ci_upper": gsm8k_results.get(
-                            "gsm8k_completion_len_p95_ci_upper", 0.0
-                        ),
-                        "metrics/gsm8k_truncation_rate_ci_lower": gsm8k_results.get(
-                            "gsm8k_truncation_rate_ci_lower", 0.0
-                        ),
-                        "metrics/gsm8k_truncation_rate_ci_upper": gsm8k_results.get(
-                            "gsm8k_truncation_rate_ci_upper", 0.0
-                        ),
-                        "metrics/gsm8k_format_error_rate_ci_lower": gsm8k_results.get(
-                            "gsm8k_format_error_rate_ci_lower", 0.0
-                        ),
-                        "metrics/gsm8k_format_error_rate_ci_upper": gsm8k_results.get(
-                            "gsm8k_format_error_rate_ci_upper", 0.0
-                        ),
-                        "metrics/gsm8k_logic_error_rate_ci_lower": gsm8k_results.get(
-                            "gsm8k_logic_error_rate_ci_lower", 0.0
-                        ),
-                        "metrics/gsm8k_logic_error_rate_ci_upper": gsm8k_results.get(
-                            "gsm8k_logic_error_rate_ci_upper", 0.0
-                        ),
-                    }
-                )
-
-                # --- W&B Table: GSM8k Test Results (append across runs via artifact) ---
-                def _fmt_ci(mean: float, lo: float, hi: float, prec: int = 3) -> str:
-                    return f"{mean:.{prec}f} ({lo:.{prec}f}, {hi:.{prec}f})"
-
-                cols = [
-                    "Model ID",
-                    "pass@1",
-                    "format error rate",
-                    "logic error rate",
-                    "truncation rate",
-                    "length (p50)",
-                    "length (p95)",
-                ]
-
-                row = [
-                    model_path,
-                    _fmt_ci(
-                        gsm8k_results["gsm8k_pass@1"],
-                        gsm8k_results["gsm8k_pass@1_ci_lower"],
-                        gsm8k_results["gsm8k_pass@1_ci_upper"],
-                    ),
-                    _fmt_ci(
-                        gsm8k_results["gsm8k_format_error_rate"],
-                        gsm8k_results["gsm8k_format_error_rate_ci_lower"],
-                        gsm8k_results["gsm8k_format_error_rate_ci_upper"],
-                    ),
-                    _fmt_ci(
-                        gsm8k_results["gsm8k_logic_error_rate"],
-                        gsm8k_results["gsm8k_logic_error_rate_ci_lower"],
-                        gsm8k_results["gsm8k_logic_error_rate_ci_upper"],
-                    ),
-                    _fmt_ci(
-                        gsm8k_results["gsm8k_truncation_rate"],
-                        gsm8k_results["gsm8k_truncation_rate_ci_lower"],
-                        gsm8k_results["gsm8k_truncation_rate_ci_upper"],
-                    ),
-                    _fmt_ci(
-                        float(gsm8k_results["gsm8k_completion_len_p50"]),
-                        float(gsm8k_results["gsm8k_completion_len_p50_ci_lower"]),
-                        float(gsm8k_results["gsm8k_completion_len_p50_ci_upper"]),
-                    ),
-                    _fmt_ci(
-                        float(gsm8k_results["gsm8k_completion_len_p95"]),
-                        float(gsm8k_results["gsm8k_completion_len_p95_ci_lower"]),
-                        float(gsm8k_results["gsm8k_completion_len_p95_ci_upper"]),
-                    ),
-                ]
-
-                # Load latest artifact table if it exists, append row, and version it
-                table_art_name = "gsm8k-test-results"
-                table_filename = "gsm8k_test_results.csv"
-                csv_rows: list[list[str]] = []
-
-                try:
-                    api = wandb.Api()
-                    latest_ref = f"{wandb.run.entity}/{wandb.run.project}/{table_art_name}:latest"
-                    art = api.artifact(latest_ref)
-                    dl_dir = Path(art.download())
-                    prior_csv = dl_dir / table_filename
-                    if prior_csv.exists():
-                        with prior_csv.open(newline="", encoding="utf-8") as f:
-                            reader = csv.reader(f)
-                            csv_rows = [r for r in reader]
-                except Exception:
-                    # No prior artifact found or fetch failed; start fresh
-                    csv_rows = []
-
-                # Ensure header and overwrite row for the same model_id if present
-                if not csv_rows or csv_rows[0] != cols:
-                    csv_rows = [cols, row]
-                else:
-                    header = csv_rows[0]
-                    existing_rows = csv_rows[1:]
-                    replaced = False
-                    for idx, r in enumerate(existing_rows):
-                        if r and r[0] == model_path:  # Model ID column
-                            existing_rows[idx] = row
-                            replaced = True
-                            break
-                    if not replaced:
-                        existing_rows.append(row)
-                    csv_rows = [header] + existing_rows
-
-                # Write updated CSV locally
-                table_path = output_path / table_filename
-                with table_path.open("w", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    writer.writerows(csv_rows)
-
-                # Log artifact with alias "latest" so next run can update in place
-                table_artifact = wandb.Artifact(table_art_name, type="evaluation-table")
-                table_artifact.add_file(str(table_path))
-                wandb.run.log_artifact(table_artifact, aliases=["latest"])
-
-                # Also log a W&B Table in this run for visualization
-                wb_table = wandb.Table(columns=cols, data=csv_rows[1:])
-                wandb.log({"GSM8k Test Results": wb_table})
-
-                # Log full completions table (one row per prompt) and overwrite within run
-                comp_cols = [
-                    "Prompt",
-                    "Gold Reasoning",
-                    "Model Completion",
-                    "Model Answer",
-                    "Gold Answer",
-                    "Correct",
-                    "Completion Length",
-                    "Truncated",
-                    "Stop Reason",
-                ]
-                comp_rows: list[list[Any]] = []
-                examples = cast(list[dict[str, Any]], gsm8k_results.get("gsm8k_results", []))
-                for ex in examples:
-                    comp_rows.append(
-                        [
-                            ex.get("question", ""),
-                            ex.get("gold", ""),
-                            ex.get("output", ""),
-                            ex.get("model_answer", ""),
-                            ex.get("gold_numeric_answer", ""),
-                            int(ex.get("reward", 0)),
-                            int(ex.get("completion_len", 0)),
-                            int(1 if ex.get("is_truncated") else 0),
-                            str(ex.get("finish_reason") or ""),
-                        ]
-                    )
-                completions_table = wandb.Table(columns=comp_cols, data=comp_rows)
-                table_key = f"Model Completions on GSM8k Test Set for {model_path}"
-                # Put into run.summary to overwrite on subsequent writes within the same run
-                wandb.run.summary[table_key] = completions_table
-
-            # Run lm-eval benchmarks if requested
-            if run_lm_eval_suites:
-                if "all" not in eval_suites and "lm_eval" not in eval_suites:
-                    tasks_to_run = [task for task in lm_eval_tasks if task in eval_suites]
-                else:
-                    tasks_to_run = lm_eval_tasks
-
-                if tasks_to_run:
-                    # For lm-eval, pass the tokenizer path
-                    lm_eval_tokenizer_path = tokenizer_path if is_local_checkpoint else model_path
-
-                    lm_eval_results = run_lm_eval(
-                        model_path=model_path,
-                        tasks=tasks_to_run,
-                        num_fewshot=lm_eval_fewshot,
-                        batch_size=lm_eval_batch_size,
-                        max_new_tokens=lm_eval_max_tokens,
-                        limit=limit,
-                        output_dir=output_path,
-                        is_local_checkpoint=is_local_checkpoint,
-                        server_host=server.host,
-                        server_port=server.port,
-                        tokenizer_path=lm_eval_tokenizer_path,
-                    )
-                    all_results["lm_eval"] = lm_eval_results
-
-                    # Log lm-eval results to W&B
-                    for task, metrics in lm_eval_results.items():
-                        if not isinstance(metrics, dict):
-                            continue
-                        to_log = {}
-                        for metric_name, val in metrics.items():
-                            if isinstance(val, int | float):
-                                # keep the original metric name to stay 1:1 with lm-eval
-                                to_log[f"metrics/lm_eval/{task}/{metric_name}"] = val
-                        if to_log:
-                            wandb.log(to_log)
-
-                    # --- W&B Table: lm-eval results (append across runs via artifact) ---
-                    def _metric_or_empty(task: str, metric_keys: list[str]) -> str:
-                        v: Any = None
-                        task_dict = lm_eval_results.get(task, {})
-                        if isinstance(task_dict, dict):
-                            for mk in metric_keys:
-                                if mk in task_dict and isinstance(task_dict[mk], int | float):
-                                    v = task_dict[mk]
-                                    break
-                        return f"{float(v):.4f}" if isinstance(v, int | float) else ""
-
-                    lm_cols: list[str] = [
-                        "Model ID",
-                        "mmlu pass@1",
-                        "MATH pass@1",
-                        "arc-challenge pass@1",
-                        "hellaswag pass@1",
-                        "truthfulqa pass@1",
-                        "winogrande pass@1",
-                        "wikitext bits-per-byte",
-                    ]
-
-                    # Fallbacks cover slight metric-name variations across lm-eval versions
-                    row_values: list[str] = [
-                        model_path,
-                        _metric_or_empty("mmlu", ["acc,none", "acc"]),
-                        _metric_or_empty("hendrycks_math", ["exact_match,none", "exact_match"]),
-                        _metric_or_empty("arc_challenge", ["acc_norm,none", "acc_norm"]),
-                        _metric_or_empty("hellaswag", ["acc_norm,none", "acc_norm"]),
-                        _metric_or_empty("truthfulqa_mc2", ["acc,none", "acc"]),
-                        _metric_or_empty("winogrande", ["acc,none", "acc"]),
-                        _metric_or_empty(
-                            "wikitext", ["bits_per_byte,none", "bits_per_byte", "bpb,none", "bpb"]
-                        ),
-                    ]
-
-                    lm_table_art_name = "lm-eval-results"
-                    lm_table_filename = "lm_eval_results.csv"
-                    lm_csv_rows: list[list[str]] = []
-
-                    try:
-                        api = wandb.Api()
-                        latest_ref = (
-                            f"{wandb.run.entity}/{wandb.run.project}/{lm_table_art_name}:latest"
-                        )
-                        art = api.artifact(latest_ref)
-                        dl_dir = Path(art.download())
-                        prior_csv = dl_dir / lm_table_filename
-                        if prior_csv.exists():
-                            with prior_csv.open(newline="", encoding="utf-8") as f:
-                                reader = csv.reader(f)
-                                lm_csv_rows = [r for r in reader]
-                    except Exception:
-                        lm_csv_rows = []
-
-                    # Ensure header and overwrite row for the same model_id if present
-                    if not lm_csv_rows or lm_csv_rows[0] != lm_cols:
-                        lm_csv_rows = [lm_cols, row_values]
-                    else:
-                        header = lm_csv_rows[0]
-                        existing_rows = lm_csv_rows[1:]
-                        replaced = False
-                        for idx, r in enumerate(existing_rows):
-                            if r and r[0] == model_path:  # Model ID column
-                                existing_rows[idx] = row_values
-                                replaced = True
-                                break
-                        if not replaced:
-                            existing_rows.append(row_values)
-                        lm_csv_rows = [header] + existing_rows
-
-                    # Write updated CSV locally
-                    lm_table_path = output_path / lm_table_filename
-                    with lm_table_path.open("w", newline="", encoding="utf-8") as f:
-                        writer = csv.writer(f)
-                        writer.writerows(lm_csv_rows)
-
-                    # Log artifact with alias "latest" so next run can update in place
-                    lm_table_artifact = wandb.Artifact(lm_table_art_name, type="evaluation-table")
-                    lm_table_artifact.add_file(str(lm_table_path))
-                    wandb.run.log_artifact(lm_table_artifact, aliases=["latest"])
-
-                    # Also log a W&B Table in this run for visualization
-                    lm_wb_table = wandb.Table(columns=lm_cols, data=lm_csv_rows[1:])
-                    wandb.log({"lm-eval results": lm_wb_table})
-
-        # Save results
-        results_file = output_path / "results.json"
-        with results_file.open("w", encoding="utf-8") as f:
-            json.dump(all_results, f, indent=2)
-
-        logger.info(f"Saved results to {results_file}")
-
-        # Create W&B artifact
-        artifact = wandb.Artifact("eval", type="evaluation")
-        artifact.add_file(str(results_file))
-        wandb.run.log_artifact(artifact)
-
-        return all_results
-
-    finally:
-        wandb.run.finish()
-
-
 def run_lm_eval(
     model_path: str,
     tasks: list[str],
@@ -1089,3 +656,468 @@ def run_lm_eval(
 
     logger.info(f"Loaded results from {results_file}")
     return raw.get("results", {})
+
+
+def log_gsm8k_to_wandb(
+    gsm8k_results: dict[str, Any],
+    model_path: str,
+    output_path: Path,
+    table_art_name: str = "gsm8k-test-results",
+    table_filename: str = "gsm8k_test_results.csv",
+) -> None:
+    if os.environ.get("WANDB_DISABLED") == "true":
+        logger.info("WANDB_DISABLED=true, skipping W&B loggin")
+        return
+
+    def _fmt_ci(mean: float, lo: float, hi: float, prec: int = 3) -> str:
+        return f"{mean:.{prec}f} ({lo:.{prec}f}, {hi:.{prec}f})"
+
+    wandb.log(
+        {
+            "metrics/gsm8k_pass@1": gsm8k_results["gsm8k_pass@1"],
+            "metrics/gsm8k_n_examples": gsm8k_results["gsm8k_n_examples"],
+            "metrics/gsm8k_pass@1_ci_lower": gsm8k_results.get("gsm8k_pass@1_ci_lower", 0.0),
+            "metrics/gsm8k_pass@1_ci_upper": gsm8k_results.get("gsm8k_pass@1_ci_upper", 0.0),
+            "metrics/gsm8k_completion_len_p50": gsm8k_results.get("gsm8k_completion_len_p50", 0.0),
+            "metrics/gsm8k_completion_len_p95": gsm8k_results.get("gsm8k_completion_len_p95", 0.0),
+            "metrics/gsm8k_truncation_rate": gsm8k_results.get("gsm8k_truncation_rate", 0.0),
+            "metrics/gsm8k_format_error_rate": gsm8k_results.get("gsm8k_format_error_rate", 0.0),
+            "metrics/gsm8k_logic_error_rate": gsm8k_results.get("gsm8k_logic_error_rate", 0.0),
+            "metrics/gsm8k_completion_len_p50_ci_lower": gsm8k_results.get(
+                "gsm8k_completion_len_p50_ci_lower", 0.0
+            ),
+            "metrics/gsm8k_completion_len_p50_ci_upper": gsm8k_results.get(
+                "gsm8k_completion_len_p50_ci_upper", 0.0
+            ),
+            "metrics/gsm8k_completion_len_p95_ci_lower": gsm8k_results.get(
+                "gsm8k_completion_len_p95_ci_lower", 0.0
+            ),
+            "metrics/gsm8k_completion_len_p95_ci_upper": gsm8k_results.get(
+                "gsm8k_completion_len_p95_ci_upper", 0.0
+            ),
+            "metrics/gsm8k_truncation_rate_ci_lower": gsm8k_results.get(
+                "gsm8k_truncation_rate_ci_lower", 0.0
+            ),
+            "metrics/gsm8k_truncation_rate_ci_upper": gsm8k_results.get(
+                "gsm8k_truncation_rate_ci_upper", 0.0
+            ),
+            "metrics/gsm8k_format_error_rate_ci_lower": gsm8k_results.get(
+                "gsm8k_format_error_rate_ci_lower", 0.0
+            ),
+            "metrics/gsm8k_format_error_rate_ci_upper": gsm8k_results.get(
+                "gsm8k_format_error_rate_ci_upper", 0.0
+            ),
+            "metrics/gsm8k_logic_error_rate_ci_lower": gsm8k_results.get(
+                "gsm8k_logic_error_rate_ci_lower", 0.0
+            ),
+            "metrics/gsm8k_logic_error_rate_ci_upper": gsm8k_results.get(
+                "gsm8k_logic_error_rate_ci_upper", 0.0
+            ),
+        }
+    )
+
+    # W&B Table: GSM8k Test Results
+    cols = [
+        "Model ID",
+        "pass@1",
+        "format error rate",
+        "logic error rate",
+        "truncation rate",
+        "length (p50)",
+        "length (p95)",
+    ]
+
+    row = [
+        model_path,
+        _fmt_ci(
+            gsm8k_results["gsm8k_pass@1"],
+            gsm8k_results["gsm8k_pass@1_ci_lower"],
+            gsm8k_results["gsm8k_pass@1_ci_upper"],
+        ),
+        _fmt_ci(
+            gsm8k_results["gsm8k_format_error_rate"],
+            gsm8k_results["gsm8k_format_error_rate_ci_lower"],
+            gsm8k_results["gsm8k_format_error_rate_ci_upper"],
+        ),
+        _fmt_ci(
+            gsm8k_results["gsm8k_logic_error_rate"],
+            gsm8k_results["gsm8k_logic_error_rate_ci_lower"],
+            gsm8k_results["gsm8k_logic_error_rate_ci_upper"],
+        ),
+        _fmt_ci(
+            gsm8k_results["gsm8k_truncation_rate"],
+            gsm8k_results["gsm8k_truncation_rate_ci_lower"],
+            gsm8k_results["gsm8k_truncation_rate_ci_upper"],
+        ),
+        _fmt_ci(
+            float(gsm8k_results["gsm8k_completion_len_p50"]),
+            float(gsm8k_results["gsm8k_completion_len_p50_ci_lower"]),
+            float(gsm8k_results["gsm8k_completion_len_p50_ci_upper"]),
+        ),
+        _fmt_ci(
+            float(gsm8k_results["gsm8k_completion_len_p95"]),
+            float(gsm8k_results["gsm8k_completion_len_p95_ci_lower"]),
+            float(gsm8k_results["gsm8k_completion_len_p95_ci_upper"]),
+        ),
+    ]
+
+    # Load latest artifact table if it exists, append row, and version it
+    table_art_name = "gsm8k-test-results"
+    table_filename = "gsm8k_test_results.csv"
+    csv_rows: list[list[str]] = []
+
+    try:
+        api = wandb.Api()
+        latest_ref = f"{wandb.run.entity}/{wandb.run.project}/{table_art_name}:latest"
+        art = api.artifact(latest_ref)
+        dl_dir = Path(art.download())
+        prior_csv = dl_dir / table_filename
+        if prior_csv.exists():
+            with prior_csv.open(newline="", encoding="utf-8") as f:
+                reader = csv.reader(f)
+                csv_rows = [r for r in reader]
+    except Exception:
+        # No prior artifact found or fetch failed; start fresh
+        csv_rows = []
+
+    # Ensure header and overwrite row for the same model_id if present
+    if not csv_rows or csv_rows[0] != cols:
+        csv_rows = [cols, row]
+    else:
+        header = csv_rows[0]
+        existing_rows = csv_rows[1:]
+        replaced = False
+        for idx, r in enumerate(existing_rows):
+            if r and r[0] == model_path:  # Model ID column
+                existing_rows[idx] = row
+                replaced = True
+                break
+        if not replaced:
+            existing_rows.append(row)
+        csv_rows = [header] + existing_rows
+
+    # Write updated CSV locally
+    table_path = output_path / table_filename
+    with table_path.open("w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerows(csv_rows)
+
+    # Log artifact with alias "latest" so next run can update in place
+    table_artifact = wandb.Artifact(table_art_name, type="evaluation-table")
+    table_artifact.add_file(str(table_path))
+    wandb.run.log_artifact(table_artifact, aliases=["latest"])
+
+    # Also log a W&B Table in this run for visualization
+    wb_table = wandb.Table(columns=cols, data=csv_rows[1:])
+    wandb.log({"GSM8k Test Results": wb_table})
+
+    # Log full completions table (one row per prompt) and overwrite within run
+    comp_cols = [
+        "Prompt",
+        "Gold Reasoning",
+        "Model Completion",
+        "Model Answer",
+        "Gold Answer",
+        "Correct",
+        "Completion Length",
+        "Truncated",
+        "Stop Reason",
+    ]
+    comp_rows: list[list[Any]] = []
+    examples = cast(list[dict[str, Any]], gsm8k_results.get("gsm8k_results", []))
+    for ex in examples:
+        comp_rows.append(
+            [
+                ex.get("question", ""),
+                ex.get("gold", ""),
+                ex.get("output", ""),
+                ex.get("model_answer", ""),
+                ex.get("gold_numeric_answer", ""),
+                int(ex.get("reward", 0)),
+                int(ex.get("completion_len", 0)),
+                int(1 if ex.get("is_truncated") else 0),
+                str(ex.get("finish_reason") or ""),
+            ]
+        )
+    completions_table = wandb.Table(columns=comp_cols, data=comp_rows)
+    table_key = f"Model Completions on GSM8k Test Set for {model_path}"
+    # Put into run.summary to overwrite on subsequent writes within the same run
+    wandb.run.summary[table_key] = completions_table
+
+
+def main(
+    model_path: str = "Qwen/Qwen2.5-Math-1.5B",
+    eval_suites: list[str] | None = None,
+    limit: int | None = None,
+    output_dir: str = "./artifacts/eval",
+    # GSM8K specific args
+    gsm8k_eval_path: str = "artifacts/gsm8k/test.jsonl",
+    gsm8k_max_tokens: int = 1024,
+    gsm8k_k_shot: int = 8,
+    gsm8k_bootstrap_samples: int = 10,
+    gsm8k_ci_alpha: float = 0.05,
+    # lm-eval specific args
+    lm_eval_tasks: list[str] | None = None,
+    lm_eval_fewshot: int = 4,
+    lm_eval_batch_size: int = 8,
+    lm_eval_max_tokens: int = 2048,
+    # vLLM args
+    tp_size: int = 1,
+    gpu_mem_util: float = 0.92,
+    # data-parallel sharding
+    num_shards: int = 1,
+    shard_id: int = 0,
+    server_port: int = 8000,
+    *,
+    temperature: float,
+    top_p: float,
+) -> dict[str, Any]:
+    """Run evaluation suite with shared vLLM server."""
+
+    # Default eval suites
+    if eval_suites is None:
+        eval_suites = ["all"]
+
+    # Default lm-eval tasks
+    if lm_eval_tasks is None:
+        lm_eval_tasks = [
+            "hendrycks_math",
+            "mmlu",
+            "arc_challenge",
+            "hellaswag",
+            "winogrande",
+            "truthfulqa_mc2",
+            "wikitext",
+        ]
+
+    # Determine if model is local checkpoint or HF repo
+    model_path_obj = Path(model_path)
+    is_local_checkpoint = model_path_obj.exists() and model_path_obj.is_dir()
+
+    # For local checkpoints, try to find the base model for tokenizer
+    tokenizer_path = model_path
+    if is_local_checkpoint:
+        logger.info(f"Using local checkpoint: {model_path}")
+
+        # Try to find base model info for tokenizer
+        config_file = model_path_obj / "config.json"
+        if config_file.exists():
+            try:
+                with config_file.open(encoding="utf-8") as f:
+                    config = json.load(f)
+                # Look for common base model identifiers
+                base_model_candidates = [
+                    config.get("_name_or_path"),
+                    config.get("base_model_name_or_path"),
+                    config.get("model_name_or_path"),
+                ]
+                for candidate in base_model_candidates:
+                    if candidate and "/" in candidate and not Path(candidate).exists():
+                        # This looks like a HF model name, use it for tokenizer
+                        tokenizer_path = candidate
+                        logger.info(f"Using base model for tokenizer: {tokenizer_path}")
+                        break
+            except Exception as e:
+                logger.warning(f"Could not read config for base model info: {e}")
+
+    else:
+        logger.info(f"Using HuggingFace model: {model_path}")
+
+    # Log evaluation configuration
+    logger.info("Evaluation configuration:")
+    logger.info(f"  Model: {model_path}")
+    logger.info(f"  Tokenizer: {tokenizer_path}")
+    logger.info(f"  Eval suites: {eval_suites}")
+    logger.info(f"  Limit: {limit}")
+
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    all_results = {}
+
+    try:
+        # Determine what evaluations to run
+        run_gsm8k = "all" in eval_suites or "gsm8k" in eval_suites
+        run_lm_eval_suites = (
+            "all" in eval_suites
+            or "lm_eval" in eval_suites
+            or any(task in eval_suites for task in lm_eval_tasks)
+        )
+
+        # Use shared vLLM server for all evaluations
+        with VLLMServerManager(
+            model_path, tp_size=tp_size, gpu_mem_util=gpu_mem_util, port=server_port
+        ) as server:
+            # Run GSM8K if requested
+            if run_gsm8k:
+                gsm8k_results = run_gsm8k_eval(
+                    model_path=model_path,
+                    eval_path=gsm8k_eval_path,
+                    limit=limit,
+                    max_new_tokens=gsm8k_max_tokens,
+                    temperature=temperature,
+                    top_p=top_p,
+                    k_shot=gsm8k_k_shot,
+                    server_host=server.host,
+                    server_port=server.port,
+                    tokenizer_path=tokenizer_path,
+                    bootstrap_samples=gsm8k_bootstrap_samples,
+                    ci_alpha=gsm8k_ci_alpha,
+                    shard_id=shard_id,
+                    num_shards=num_shards,
+                )
+                all_results.update(gsm8k_results)
+
+                log_gsm8k_to_wandb(
+                    gsm8k_results=gsm8k_results,
+                    model_path=model_path,
+                    output_path=output_path,
+                )
+
+            # Run lm-eval benchmarks if requested
+            if run_lm_eval_suites:
+                if "all" not in eval_suites and "lm_eval" not in eval_suites:
+                    tasks_to_run = [task for task in lm_eval_tasks if task in eval_suites]
+                else:
+                    tasks_to_run = lm_eval_tasks
+
+                if tasks_to_run:
+                    # For lm-eval, pass the tokenizer path
+                    lm_eval_tokenizer_path = tokenizer_path if is_local_checkpoint else model_path
+
+                    lm_eval_results = run_lm_eval(
+                        model_path=model_path,
+                        tasks=tasks_to_run,
+                        num_fewshot=lm_eval_fewshot,
+                        batch_size=lm_eval_batch_size,
+                        max_new_tokens=lm_eval_max_tokens,
+                        limit=limit,
+                        output_dir=output_path,
+                        is_local_checkpoint=is_local_checkpoint,
+                        server_host=server.host,
+                        server_port=server.port,
+                        tokenizer_path=lm_eval_tokenizer_path,
+                    )
+                    all_results["lm_eval"] = lm_eval_results
+
+                    # Log lm-eval results to W&B
+                    for task, metrics in lm_eval_results.items():
+                        if not isinstance(metrics, dict):
+                            continue
+                        to_log = {}
+                        for metric_name, val in metrics.items():
+                            if isinstance(val, int | float):
+                                # keep the original metric name to stay 1:1 with lm-eval
+                                to_log[f"metrics/lm_eval/{task}/{metric_name}"] = val
+                        if to_log:
+                            wandb.log(to_log)
+
+                    # --- W&B Table: lm-eval results (append across runs via artifact) ---
+                    def _metric_or_empty(task: str, metric_keys: list[str]) -> str:
+                        v: Any = None
+                        task_dict = lm_eval_results.get(task, {})
+                        if isinstance(task_dict, dict):
+                            for mk in metric_keys:
+                                if mk in task_dict and isinstance(task_dict[mk], int | float):
+                                    v = task_dict[mk]
+                                    break
+                        return f"{float(v):.4f}" if isinstance(v, int | float) else ""
+
+                    lm_cols: list[str] = [
+                        "Model ID",
+                        "mmlu pass@1",
+                        "MATH pass@1",
+                        "arc-challenge pass@1",
+                        "hellaswag pass@1",
+                        "truthfulqa pass@1",
+                        "winogrande pass@1",
+                        "wikitext bits-per-byte",
+                    ]
+
+                    # Fallbacks cover slight metric-name variations across lm-eval versions
+                    row_values: list[str] = [
+                        model_path,
+                        _metric_or_empty("mmlu", ["acc,none", "acc"]),
+                        _metric_or_empty("hendrycks_math", ["exact_match,none", "exact_match"]),
+                        _metric_or_empty("arc_challenge", ["acc_norm,none", "acc_norm"]),
+                        _metric_or_empty("hellaswag", ["acc_norm,none", "acc_norm"]),
+                        _metric_or_empty("truthfulqa_mc2", ["acc,none", "acc"]),
+                        _metric_or_empty("winogrande", ["acc,none", "acc"]),
+                        _metric_or_empty(
+                            "wikitext", ["bits_per_byte,none", "bits_per_byte", "bpb,none", "bpb"]
+                        ),
+                    ]
+
+                    lm_table_art_name = "lm-eval-results"
+                    lm_table_filename = "lm_eval_results.csv"
+                    lm_csv_rows: list[list[str]] = []
+
+                    try:
+                        api = wandb.Api()
+                        latest_ref = (
+                            f"{wandb.run.entity}/{wandb.run.project}/{lm_table_art_name}:latest"
+                        )
+                        art = api.artifact(latest_ref)
+                        dl_dir = Path(art.download())
+                        prior_csv = dl_dir / lm_table_filename
+                        if prior_csv.exists():
+                            with prior_csv.open(newline="", encoding="utf-8") as f:
+                                reader = csv.reader(f)
+                                lm_csv_rows = [r for r in reader]
+                    except Exception:
+                        lm_csv_rows = []
+
+                    # Ensure header and overwrite row for the same model_id if present
+                    if not lm_csv_rows or lm_csv_rows[0] != lm_cols:
+                        lm_csv_rows = [lm_cols, row_values]
+                    else:
+                        header = lm_csv_rows[0]
+                        existing_rows = lm_csv_rows[1:]
+                        replaced = False
+                        for idx, r in enumerate(existing_rows):
+                            if r and r[0] == model_path:  # Model ID column
+                                existing_rows[idx] = row_values
+                                replaced = True
+                                break
+                        if not replaced:
+                            existing_rows.append(row_values)
+                        lm_csv_rows = [header] + existing_rows
+
+                    # Write updated CSV locally
+                    lm_table_path = output_path / lm_table_filename
+                    with lm_table_path.open("w", newline="", encoding="utf-8") as f:
+                        writer = csv.writer(f)
+                        writer.writerows(lm_csv_rows)
+
+                    # Log artifact with alias "latest" so next run can update in place
+                    lm_table_artifact = wandb.Artifact(lm_table_art_name, type="evaluation-table")
+                    lm_table_artifact.add_file(str(lm_table_path))
+                    wandb.run.log_artifact(lm_table_artifact, aliases=["latest"])
+
+                    # Also log a W&B Table in this run for visualization
+                    lm_wb_table = wandb.Table(columns=lm_cols, data=lm_csv_rows[1:])
+                    wandb.log({"lm-eval results": lm_wb_table})
+
+        # Save results
+        if num_shards > 1:
+            results_file = output_path / f"results_shard{shard_id}_of_{num_shards}.json"
+        else:
+            results_file = output_path / "results.json"
+
+        with results_file.open("w", encoding="utf-8") as f:
+            json.dump(all_results, f, indent=2)
+
+        logger.info(f"Saved results to {results_file}")
+
+        # Create W&B artifact
+        artifact = wandb.Artifact("eval", type="evaluation")
+        artifact.add_file(str(results_file))
+        wandb.run.log_artifact(artifact)
+
+        return all_results
+
+    finally:
+        if os.environ.get("WANDB_DISABLED") != "true":
+            run = getattr(wandb, "run", None)
+            if run is not None:
+                wandb.run.finish()

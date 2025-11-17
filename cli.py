@@ -101,9 +101,9 @@ def main(cfg: DictConfig) -> None:
 
     try:
         if command == "eval":
-            from grpo_gsm8k.evaluation.eval import main as eval_main
+            from grpo_gsm8k.evaluation.eval_launcher import launch_eval
 
-            eval_main(**sub_cfg)
+            launch_eval(sub_cfg)
         elif command == "data":
             from grpo_gsm8k.data.data_prep import main as data_main
 
