@@ -658,6 +658,67 @@ def run_lm_eval(
     return raw.get("results", {})
 
 
+def assign_lm_eval_tasks_to_shard(
+    tasks_to_run: list[str],
+    num_shards: int,
+    shard_id: int,
+    logger: logging.Logger | None = None,
+) -> list[str]:
+    """
+    Greedy weighted partitioning of lm-eval tasks across shards.
+
+    Uses a simple bin-packing heuristic based on a hand-crafted cost
+    per task (approximate runtime). Returns the list of tasks assigned
+    to the given shard_id.
+    """
+    if num_shards <= 1:
+        return tasks_to_run
+
+    if not (0 <= shard_id < num_shards):
+        raise ValueError(f"shard_id {shard_id} must be in [0, {num_shards})")
+
+    # Heuristic costs based on empirical/runtime ranking:
+    # truthfulqa_mc2 < winogrande ≲ arc_challenge < hellaswag
+    # < wikitext ≲ mmlu ≲ hendrycks_math
+    task_cost: dict[str, int] = {
+        "truthfulqa_mc2": 1,
+        "winogrande": 2,
+        "arc_challenge": 2,
+        "hellaswag": 3,
+        "wikitext": 4,
+        "mmlu": 5,
+        "hendrycks_math": 6,
+    }
+
+    # Sort tasks by descending cost so we place heavy ones first
+    weighted_tasks = sorted(
+        tasks_to_run,
+        key=lambda t: task_cost.get(t, 1),
+        reverse=True,
+    )
+
+    # Greedy bin packing: assign each task to shard with smallest current load
+    shard_tasks: list[list[str]] = [[] for _ in range(num_shards)]
+    shard_loads: list[int] = [0 for _ in range(num_shards)]
+
+    for t in weighted_tasks:
+        cost = task_cost.get(t, 1)
+        j = min(range(num_shards), key=lambda i: shard_loads[i])
+        shard_tasks[j].append(t)
+        shard_loads[j] += cost
+
+    if logger is not None:
+        logger.info(
+            "[lm-eval] partitioned tasks across %d shards: loads=%s; shard_%d_tasks=%s",
+            num_shards,
+            shard_loads,
+            shard_id,
+            shard_tasks[shard_id],
+        )
+
+    return shard_tasks[shard_id]
+
+
 def log_gsm8k_to_wandb(
     gsm8k_results: dict[str, Any],
     model_path: str,
@@ -981,13 +1042,20 @@ def main(
                 else:
                     tasks_to_run = lm_eval_tasks
 
-                if tasks_to_run:
+                tasks_for_this_shard = assign_lm_eval_tasks_to_shard(
+                    tasks_to_run=tasks_to_run,
+                    num_shards=num_shards,
+                    shard_id=shard_id,
+                    logger=logger,
+                )
+
+                if tasks_for_this_shard:
                     # For lm-eval, pass the tokenizer path
                     lm_eval_tokenizer_path = tokenizer_path if is_local_checkpoint else model_path
 
                     lm_eval_results = run_lm_eval(
                         model_path=model_path,
-                        tasks=tasks_to_run,
+                        tasks=tasks_for_this_shard,
                         num_fewshot=lm_eval_fewshot,
                         batch_size=lm_eval_batch_size,
                         max_new_tokens=lm_eval_max_tokens,
@@ -1097,6 +1165,10 @@ def main(
                     # Also log a W&B Table in this run for visualization
                     lm_wb_table = wandb.Table(columns=lm_cols, data=lm_csv_rows[1:])
                     wandb.log({"lm-eval results": lm_wb_table})
+                else:
+                    logger.info(
+                        f"[lm-eval] shard_id={shard_id} has no tasks assigned; skipping lm-eval"
+                    )
 
         # Save results
         if num_shards > 1:

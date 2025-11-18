@@ -1,5 +1,5 @@
 model_path: Qwen/Qwen2.5-Math-1.5B
-eval_suites: [gsm8k]  # options: gsm8k, lm_eval, all
+eval_suites: [all]  # options: gsm8k, lm_eval, all, hendrycks_math, mmlu, arc_challenge, hellaswag, winogrande, truthfulqa_mc2, wikitext
 limit: null
 output_dir: ./artifacts/eval
 
@@ -27,6 +27,6 @@ gpu_mem_util: 0.92
 temperature: 1.0  # match to train config
 top_p: 1.0  # match to train config
 
-# Data-parallel for GSM8k
+# Data-parallel for GSM8k & task-parallel for lm-eval
 num_shards: 2  # should equal num available GPUs
 base_port: 8000

@@ -3,13 +3,12 @@ import multiprocessing as mp
 import os
 import subprocess
 from inspect import signature
-from pathlib import Path
 from typing import Any
 
 import wandb
 
 from grpo_gsm8k.evaluation.aggregate_gsm8k_results import run_aggregate
-from grpo_gsm8k.evaluation.eval import log_gsm8k_to_wandb, main
+from grpo_gsm8k.evaluation.eval import main
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +64,6 @@ def _worker_eval(shard_id: int, gpu_id: str, cfg: dict[str, Any]) -> None:
 
 
 def launch_eval(cfg: dict[str, Any]) -> None:
-    output_dir = cfg["output_dir"]
     num_shards = cfg["num_shards"]
     gpu_ids = get_visible_gpu_ids()
     num_gpus = len(gpu_ids)
@@ -103,21 +101,9 @@ def launch_eval(cfg: dict[str, Any]) -> None:
         if p.exitcode != 0:
             raise RuntimeError(f"Shard process {p.pid} exited with code {p.exitcode}")
 
-    gsm8k_results: dict[str, Any] = run_aggregate(cfg)
+    eval_suites = cfg.get("eval_suites") or ["all"]
+    run_gsm8k = ("all" in eval_suites) or ("gsm8k" in eval_suites)
+    if run_gsm8k:
+        run_aggregate(cfg)
 
-    log_gsm8k_to_wandb(
-        gsm8k_results=gsm8k_results,
-        model_path=cfg["model_path"],
-        output_path=Path(output_dir),
-    )
-
-    merged_results_file = Path(output_dir) / "results.json"
-    with merged_results_file.open("w", encoding="utf-8") as f:
-        import json
-
-        json.dump(gsm8k_results, f, indent=2)
-
-    artifact = wandb.Artifact("eval", type="evaluation")
-    artifact.add_file(str(merged_results_file))
-    wandb.run.log_artifact(artifact)
     wandb.run.finish()
