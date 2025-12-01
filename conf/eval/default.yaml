@@ -4,7 +4,7 @@ limit: null
 output_dir: ./artifacts/eval
 
 gsm8k_eval_path: artifacts/gsm8k/test.jsonl
-gsm8k_max_tokens: 2048
+gsm8k_max_tokens: 1536
 gsm8k_k_shot: 0
 gsm8k_bootstrap_samples: 1000  # costs little time/compute
 gsm8k_ci_alpha: 0.05
@@ -24,9 +24,9 @@ lm_eval_max_tokens: 2048
 # vLLM args
 tp_size: 1
 gpu_mem_util: 0.92
-temperature: 1.0  # match to train config
+temperature: 0.0  # match to train config (0 for base/SFT; 1 for RL)
 top_p: 1.0  # match to train config
 
 # Data-parallel for GSM8k & task-parallel for lm-eval
-num_shards: 2  # should equal num available GPUs
+num_shards: 8  # should equal num available GPUs
 base_port: 8000
