@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import datetime
 import json
 import logging
 import math
@@ -991,8 +992,28 @@ def main(
     logger.info(f"  Eval suites: {eval_suites}")
     logger.info(f"  Limit: {limit}")
 
-    output_path = Path(output_dir)
+    logger.info(f"  Limit: {limit}")
+
+    # Build per-run eval folder: artifacts/eval/{YYYYMMDD}_{wandb_run}
+    # use pid if wandb is disabled
+    date_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
+    wb_run_id = os.environ.get("WANDB_RUN_ID")
+    if not wb_run_id:
+        wb_disabled = os.environ.get("WANDB_DISABLED") == "true"
+        run_obj = getattr(wandb, "run", None)
+        if (not wb_disabled) and run_obj is not None and getattr(run_obj, "id", None):
+            wb_run_id = run_obj.id
+        else:
+            wb_run_id = f"local-{os.getpid()}"
+
+    per_run_suffix = f"{date_str}_{wb_run_id}"
+    root = Path(output_dir)
+    if root.name == per_run_suffix or str(root).endswith(per_run_suffix):
+        output_path = root
+    else:
+        output_path = root / per_run_suffix
     output_path.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Results directory: {output_path}")
 
     all_results = {}
 

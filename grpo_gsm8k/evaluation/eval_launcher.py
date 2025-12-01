@@ -2,7 +2,9 @@ import logging
 import multiprocessing as mp
 import os
 import subprocess
+from datetime import datetime, timezone
 from inspect import signature
+from pathlib import Path
 from typing import Any
 
 import wandb
@@ -60,6 +62,11 @@ def _worker_eval(shard_id: int, gpu_id: str, cfg: dict[str, Any]) -> None:
     allowed = set(sig.parameters.keys())
     kwargs = {k: v for k, v in base_kwargs.items() if k in allowed}
 
+    # Propagate master W&B run id so all shards write to same folder
+    run_id = cfg.get("wandb_run_id")
+    if run_id:
+        os.environ["WANDB_RUN_ID"] = str(run_id)
+
     main(**kwargs)
 
 
@@ -73,6 +80,16 @@ def launch_eval(cfg: dict[str, Any]) -> None:
             f"Requested num_shards={num_shards}, but only {num_gpus} GPUs visible: "
             f"{gpu_ids!r}. Either reduce num_shards or expose more GPUs."
         )
+
+    run_obj = getattr(wandb, "run", None)
+    wb_run_id = getattr(run_obj, "id", None)
+    if wb_run_id:
+        os.environ["WANDB_RUN_ID"] = str(wb_run_id)
+    date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+    per_run_dir = Path(cfg["output_dir"]) / f"{date_str}_{wb_run_id or 'local'}"
+    cfg = dict(cfg)  # ensure a local, mutable copy
+    cfg["output_dir"] = str(per_run_dir)
+    cfg["wandb_run_id"] = wb_run_id
 
     if num_shards <= 1:
         # single-process path, W&B enabled

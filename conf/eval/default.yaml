@@ -24,7 +24,7 @@ lm_eval_max_tokens: 2048
 # vLLM args
 tp_size: 1
 gpu_mem_util: 0.92
-temperature: 0.0  # match to train config (0 for base/SFT; 1 for RL)
+temperature: 0.0
 top_p: 1.0  # match to train config
 
 # Data-parallel for GSM8k & task-parallel for lm-eval
