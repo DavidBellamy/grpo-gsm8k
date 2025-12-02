@@ -723,16 +723,10 @@ def assign_lm_eval_tasks_to_shard(
 def log_gsm8k_to_wandb(
     gsm8k_results: dict[str, Any],
     model_path: str,
-    output_path: Path,
-    table_art_name: str = "gsm8k-test-results",
-    table_filename: str = "gsm8k_test_results.csv",
 ) -> None:
     if os.environ.get("WANDB_DISABLED") == "true":
         logger.info("WANDB_DISABLED=true, skipping W&B loggin")
         return
-
-    def _fmt_ci(mean: float, lo: float, hi: float, prec: int = 3) -> str:
-        return f"{mean:.{prec}f} ({lo:.{prec}f}, {hi:.{prec}f})"
 
     wandb.log(
         {
@@ -777,101 +771,6 @@ def log_gsm8k_to_wandb(
             ),
         }
     )
-
-    # W&B Table: GSM8k Test Results
-    cols = [
-        "Model ID",
-        "pass@1",
-        "format error rate",
-        "logic error rate",
-        "truncation rate",
-        "length (p50)",
-        "length (p95)",
-    ]
-
-    row = [
-        model_path,
-        _fmt_ci(
-            gsm8k_results["gsm8k_pass@1"],
-            gsm8k_results["gsm8k_pass@1_ci_lower"],
-            gsm8k_results["gsm8k_pass@1_ci_upper"],
-        ),
-        _fmt_ci(
-            gsm8k_results["gsm8k_format_error_rate"],
-            gsm8k_results["gsm8k_format_error_rate_ci_lower"],
-            gsm8k_results["gsm8k_format_error_rate_ci_upper"],
-        ),
-        _fmt_ci(
-            gsm8k_results["gsm8k_logic_error_rate"],
-            gsm8k_results["gsm8k_logic_error_rate_ci_lower"],
-            gsm8k_results["gsm8k_logic_error_rate_ci_upper"],
-        ),
-        _fmt_ci(
-            gsm8k_results["gsm8k_truncation_rate"],
-            gsm8k_results["gsm8k_truncation_rate_ci_lower"],
-            gsm8k_results["gsm8k_truncation_rate_ci_upper"],
-        ),
-        _fmt_ci(
-            float(gsm8k_results["gsm8k_completion_len_p50"]),
-            float(gsm8k_results["gsm8k_completion_len_p50_ci_lower"]),
-            float(gsm8k_results["gsm8k_completion_len_p50_ci_upper"]),
-        ),
-        _fmt_ci(
-            float(gsm8k_results["gsm8k_completion_len_p95"]),
-            float(gsm8k_results["gsm8k_completion_len_p95_ci_lower"]),
-            float(gsm8k_results["gsm8k_completion_len_p95_ci_upper"]),
-        ),
-    ]
-
-    # Load latest artifact table if it exists, append row, and version it
-    table_art_name = "gsm8k-test-results"
-    table_filename = "gsm8k_test_results.csv"
-    csv_rows: list[list[str]] = []
-
-    try:
-        api = wandb.Api()
-        latest_ref = f"{wandb.run.entity}/{wandb.run.project}/{table_art_name}:latest"
-        art = api.artifact(latest_ref)
-        dl_dir = Path(art.download())
-        prior_csv = dl_dir / table_filename
-        if prior_csv.exists():
-            with prior_csv.open(newline="", encoding="utf-8") as f:
-                reader = csv.reader(f)
-                csv_rows = [r for r in reader]
-    except Exception:
-        # No prior artifact found or fetch failed; start fresh
-        csv_rows = []
-
-    # Ensure header and overwrite row for the same model_id if present
-    if not csv_rows or csv_rows[0] != cols:
-        csv_rows = [cols, row]
-    else:
-        header = csv_rows[0]
-        existing_rows = csv_rows[1:]
-        replaced = False
-        for idx, r in enumerate(existing_rows):
-            if r and r[0] == model_path:  # Model ID column
-                existing_rows[idx] = row
-                replaced = True
-                break
-        if not replaced:
-            existing_rows.append(row)
-        csv_rows = [header] + existing_rows
-
-    # Write updated CSV locally
-    table_path = output_path / table_filename
-    with table_path.open("w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerows(csv_rows)
-
-    # Log artifact with alias "latest" so next run can update in place
-    table_artifact = wandb.Artifact(table_art_name, type="evaluation-table")
-    table_artifact.add_file(str(table_path))
-    wandb.run.log_artifact(table_artifact, aliases=["latest"])
-
-    # Also log a W&B Table in this run for visualization
-    wb_table = wandb.Table(columns=cols, data=csv_rows[1:])
-    wandb.log({"GSM8k Test Results": wb_table})
 
     # Log full completions table (one row per prompt) and overwrite within run
     comp_cols = [
@@ -1053,7 +952,6 @@ def main(
                 log_gsm8k_to_wandb(
                     gsm8k_results=gsm8k_results,
                     model_path=model_path,
-                    output_path=output_path,
                 )
 
             # Run lm-eval benchmarks if requested
