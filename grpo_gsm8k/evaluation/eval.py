@@ -89,11 +89,11 @@ class VLLMServerManager:
             try:
                 response = requests.get(f"{base_url}/v1/models", timeout=5)
                 if response.status_code == 200:
-                    logger.info(f"vLLM server is ready after {i+1} seconds")
+                    logger.info(f"vLLM server is ready after {i + 1} seconds")
                     return self
             except Exception:
                 if i % 10 == 0:  # Log every 10 seconds
-                    logger.info(f"Waiting for vLLM server... ({i+1}s)")
+                    logger.info(f"Waiting for vLLM server... ({i + 1}s)")
             time.sleep(1)
 
         # Get server logs for debugging
@@ -332,7 +332,7 @@ def run_gsm8k_eval(
 
     for i, (prompt, data_item) in enumerate(zip(prompts, data)):
         if i % 50 == 0:
-            logger.info(f"Processing GSM8K example {i+1}/{len(prompts)}")
+            logger.info(f"Processing GSM8K example {i + 1}/{len(prompts)}")
 
         response = requests.post(
             base_url,
@@ -408,11 +408,30 @@ def run_gsm8k_eval(
             }
         )
 
-    pass_at_1 = sum(r["reward"] for r in results) / len(results) if results else 0.0
-    logger.info(f"GSM8K evaluation complete: {pass_at_1:.3f} pass@1 on {len(results)} examples")
-
-    # Bootstrap CI over per-example rewards
+    # Counts for system-level vs conditional metrics
     rewards = [int(r["reward"]) for r in results]
+    n_total = len(results)
+    n_pass = sum(rewards)
+    n_trunc = truncated_count
+    n_fmt = format_error_count
+    n_logic = logic_error_count
+    non_truncated = n_total - n_trunc
+    parsed = non_truncated - n_fmt if non_truncated > 0 else 0
+
+    # System-level rates (uniform over all N)
+    pass_at_1 = (n_pass / n_total) if n_total else 0.0
+    trunc_rate = (n_trunc / n_total) if n_total else 0.0
+    fmt_err_rate = (n_fmt / n_total) if n_total else 0.0
+    logic_err_rate = (n_logic / n_total) if n_total else 0.0
+
+    # Conditional reasoning metrics
+    fmt_given_not_trunc = (n_fmt / non_truncated) if non_truncated > 0 else 0.0
+    pass_given_parsed = (n_pass / parsed) if parsed > 0 else 0.0
+    logic_given_parsed = (n_logic / parsed) if parsed > 0 else 0.0
+
+    logger.info(f"GSM8K evaluation complete: {pass_at_1:.3f} pass@1 on {n_total} examples")
+
+    # Bootstrap CI over per-example rewards (for pass@1)
     stats = (
         compute_bootstrap_ci_binary(rewards, n_boot=bootstrap_samples, alpha=ci_alpha)
         if results
@@ -430,13 +449,6 @@ def run_gsm8k_eval(
     )
     comp_p50 = _percentile(comp_lens, 0.5) if comp_lens else 0.0
     comp_p95 = _percentile(comp_lens, 0.95) if comp_lens else 0.0
-
-    # Truncation rate (finish_reason == "length")
-    trunc_rate = (truncated_count / len(results)) if results else 0.0
-
-    # Error rates (exclude truncations from denominator)
-    fmt_err_rate = (format_error_count / non_truncated_count) if non_truncated_count else 0.0
-    logic_err_rate = (logic_error_count / non_truncated_count) if non_truncated_count else 0.0
 
     # --- Bootstrap CIs for additional GSM8K metrics ---
     if comp_lens:
@@ -465,17 +477,17 @@ def run_gsm8k_eval(
     else:
         trunc_ci = {"ci_lower": 0.0, "ci_upper": 0.0}
 
-    # Format/logical error rate CIs over non-truncated examples (binary)
-    if non_truncated_count:
+    # System-level format/logical error rate CIs (binary flags over all examples)
+    if results:
         fmt_flags = [
-            1 if ((int(r["reward"]) == 0) and (not r["formatting_ok"])) else 0
+            1
+            if ((int(r["reward"]) == 0) and (not r["formatting_ok"]) and (not r["is_truncated"]))
+            else 0
             for r in results
-            if not r["is_truncated"]
         ]
         logic_flags = [
-            1 if ((int(r["reward"]) == 0) and r["formatting_ok"]) else 0
+            1 if ((int(r["reward"]) == 0) and r["formatting_ok"] and (not r["is_truncated"])) else 0
             for r in results
-            if not r["is_truncated"]
         ]
         fmt_ci = compute_bootstrap_ci_binary(fmt_flags, n_boot=bootstrap_samples, alpha=ci_alpha)
         logic_ci = compute_bootstrap_ci_binary(
@@ -496,6 +508,9 @@ def run_gsm8k_eval(
         "gsm8k_truncation_rate": trunc_rate,
         "gsm8k_format_error_rate": fmt_err_rate,
         "gsm8k_logic_error_rate": logic_err_rate,
+        "gsm8k_format_error_rate_given_not_trunc": fmt_given_not_trunc,
+        "gsm8k_pass_given_parsed": pass_given_parsed,
+        "gsm8k_logic_error_rate_given_parsed": logic_given_parsed,
         "gsm8k_completion_len_p50_ci_lower": p50_ci["ci_lower"],
         "gsm8k_completion_len_p50_ci_upper": p50_ci["ci_upper"],
         "gsm8k_completion_len_p95_ci_lower": p95_ci["ci_lower"],
@@ -739,6 +754,13 @@ def log_gsm8k_to_wandb(
             "metrics/gsm8k_truncation_rate": gsm8k_results.get("gsm8k_truncation_rate", 0.0),
             "metrics/gsm8k_format_error_rate": gsm8k_results.get("gsm8k_format_error_rate", 0.0),
             "metrics/gsm8k_logic_error_rate": gsm8k_results.get("gsm8k_logic_error_rate", 0.0),
+            "metrics/gsm8k_format_error_rate_given_not_trunc": gsm8k_results.get(
+                "gsm8k_format_error_rate_given_not_trunc", 0.0
+            ),
+            "metrics/gsm8k_pass_given_parsed": gsm8k_results.get("gsm8k_pass_given_parsed", 0.0),
+            "metrics/gsm8k_logic_error_rate_given_parsed": gsm8k_results.get(
+                "gsm8k_logic_error_rate_given_parsed", 0.0
+            ),
             "metrics/gsm8k_completion_len_p50_ci_lower": gsm8k_results.get(
                 "gsm8k_completion_len_p50_ci_lower", 0.0
             ),
