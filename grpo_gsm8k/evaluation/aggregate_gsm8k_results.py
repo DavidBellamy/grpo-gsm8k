@@ -3,8 +3,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import wandb
-
 from grpo_gsm8k.evaluation.eval import (
     _percentile,
     compute_bootstrap_ci_binary,
@@ -126,11 +124,6 @@ def run_aggregate(cfg: dict[str, Any]) -> dict[str, Any]:
     log_gsm8k_to_wandb(
         gsm8k_results=all_results_dict,
         model_path=cfg["model_path"],
-        output_path=output_dir,
     )
-
-    artifact = wandb.Artifact("eval", type="evaluation")
-    artifact.add_file(str(merged_results_file))
-    wandb.run.log_artifact(artifact)
 
     return all_results_dict
