@@ -387,14 +387,14 @@ def train_sft_on_r1_pairs(
             debug_checks = bool(int(os.environ.get("DEBUG_CHECKS", "0")))  # run with DEBUG_CHECKS=1
             if debug_checks:
                 # 1) No loss-bearing token should have labels == -100
-                assert not torch.any(
-                    response_mask.bool() & labels.eq(-100)
-                ), "response_mask=1 but labels=-100 → labeling bug"
+                assert not torch.any(response_mask.bool() & labels.eq(-100)), (
+                    "response_mask=1 but labels=-100 → labeling bug"
+                )
 
                 # 2) Padded positions (attention_mask==0) should be ignored in labels
-                assert torch.all(
-                    labels.masked_select(attention_mask.eq(0)) == -100
-                ), "padded tokens should have labels=-100"
+                assert torch.all(labels.masked_select(attention_mask.eq(0)) == -100), (
+                    "padded tokens should have labels=-100"
+                )
 
             # Forward
             outputs = model(input_ids, attention_mask)
@@ -460,16 +460,17 @@ def train_sft_on_r1_pairs(
                         result_step = int(result.get("step", update_step))
                         metrics = {
                             "steps/val_step": int(result_step),
-                            f"{val_title}/avg_response_length": float(
-                                result.get("avg_response_length", 0.0)
-                            ),
-                            f"{val_title}/accuracy": float(result.get("accuracy", 0.0)),
-                            f"{val_title}/truncation_rate": float(
-                                result.get("truncation_rate", 0.0)
-                            ),
-                            f"{val_title}/length_p50": float(result.get("length_p50", 0.0)),
-                            f"{val_title}/length_p95": float(result.get("length_p95", 0.0)),
-                            f"{val_title}/toks_per_sec": float(result.get("toks_per_sec", 0.0)),
+                            f"{val_title}/pass_at_1": result["pass_at_1"],
+                            f"{val_title}/trunc_rate": result["trunc_rate"],
+                            f"{val_title}/fmt_err_rate": result["fmt_err_rate"],
+                            f"{val_title}/logic_err_rate": result["logic_err_rate"],
+                            f"{val_title}/fmt_given_not_trunc": result["fmt_given_not_trunc"],
+                            f"{val_title}/pass_given_parsed": result["pass_given_parsed"],
+                            f"{val_title}/logic_given_parsed": result["logic_given_parsed"],
+                            f"{val_title}/avg_response_length": result["avg_response_length"],
+                            f"{val_title}/length_p50": result["length_p50"],
+                            f"{val_title}/length_p95": result["length_p95"],
+                            f"{val_title}/toks_per_sec": result["toks_per_sec"],
                         }
 
                         lps = [
@@ -710,14 +711,17 @@ def train_sft_on_r1_pairs(
                     result_step = int(result.get("step", update_step))
                     metrics = {
                         "steps/val_step": int(result_step),
-                        f"{val_title}/avg_response_length": float(
-                            result.get("avg_response_length", 0.0)
-                        ),
-                        f"{val_title}/accuracy": float(result.get("accuracy", 0.0)),
-                        f"{val_title}/truncation_rate": float(result.get("truncation_rate", 0.0)),
-                        f"{val_title}/length_p50": float(result.get("length_p50", 0.0)),
-                        f"{val_title}/length_p95": float(result.get("length_p95", 0.0)),
-                        f"{val_title}/toks_per_sec": float(result.get("toks_per_sec", 0.0)),
+                        f"{val_title}/pass_at_1": result["pass_at_1"],
+                        f"{val_title}/trunc_rate": result["trunc_rate"],
+                        f"{val_title}/fmt_err_rate": result["fmt_err_rate"],
+                        f"{val_title}/logic_err_rate": result["logic_err_rate"],
+                        f"{val_title}/fmt_given_not_trunc": result["fmt_given_not_trunc"],
+                        f"{val_title}/pass_given_parsed": result["pass_given_parsed"],
+                        f"{val_title}/logic_given_parsed": result["logic_given_parsed"],
+                        f"{val_title}/avg_response_length": result["avg_response_length"],
+                        f"{val_title}/length_p50": result["length_p50"],
+                        f"{val_title}/length_p95": result["length_p95"],
+                        f"{val_title}/toks_per_sec": result["toks_per_sec"],
                     }
 
                     lps = [

@@ -296,6 +296,8 @@ def vllm_worker_persistent(
         pred_answers: list[str] = []
         correct_flags: list[int] = []
         gen_token_counts: list[int] = []
+        fmt_error_flags: list[int] = []
+        logic_error_flags: list[int] = []
 
         for out in outs:
             if not out.outputs:
@@ -322,7 +324,8 @@ def vllm_worker_persistent(
             # stop reason / truncation
             fr = getattr(choice, "finish_reason", None) or ""
             stop_reasons.append(fr)
-            trunc_flags.append(1 if fr == "length" else 0)
+            trunc_flag = 1 if fr == "length" else 0
+            trunc_flags.append(trunc_flag)
 
             # avg token logprob & perplexity
             lp = None
@@ -347,9 +350,37 @@ def vllm_worker_persistent(
             pred_answers.append(pa)
             if answers and len(answers) >= len(pred_answers):
                 gt = _normalize_num_str(answers[len(pred_answers) - 1])
-                correct_flags.append(1 if (gt and pa and gt == pa) else 0)
+                is_correct = 1 if (gt and pa and gt == pa) else 0
+                correct_flags.append(is_correct)
+                # classify errors
+                if trunc_flag:
+                    fmt_error_flags.append(0)
+                    logic_error_flags.append(0)
+                else:
+                    if not pa:
+                        # unparseable / missing answer -> format error
+                        fmt_error_flags.append(1)
+                        logic_error_flags.append(0)
+                    elif not is_correct:
+                        # parse but wrong -> logic error
+                        fmt_error_flags.append(0)
+                        logic_error_flags.append(1)
+                    else:
+                        fmt_error_flags.append(0)
+                        logic_error_flags.append(0)
             else:
+                # no ground truth; we can still flag format errors, but not logic
                 correct_flags.append(0)
+                if trunc_flag:
+                    fmt_error_flags.append(0)
+                    logic_error_flags.append(0)
+                else:
+                    if not pa:
+                        fmt_error_flags.append(1)
+                        logic_error_flags.append(0)
+                    else:
+                        fmt_error_flags.append(0)
+                        logic_error_flags.append(0)
 
         avg_len = sum(lengths) / max(len(lengths), 1)
         tot_gen_toks = sum(gen_token_counts)
@@ -363,6 +394,26 @@ def vllm_worker_persistent(
         else:
             p50 = 0.0
             p95 = 0.0
+
+        # System-level vs conditional metrics (to match reference)
+        n_total = len(pred_answers)
+        n_pass = sum(correct_flags)
+        n_trunc = sum(trunc_flags)
+        n_fmt = sum(fmt_error_flags)
+        n_logic = sum(logic_error_flags)
+        non_truncated = n_total - n_trunc
+        parsed = non_truncated - n_fmt if non_truncated > 0 else 0
+
+        # System-level rates (uniform over all N)
+        pass_at_1 = (n_pass / n_total) if n_total else 0.0
+        trunc_rate = (n_trunc / n_total) if n_total else 0.0
+        fmt_err_rate = (n_fmt / n_total) if n_total else 0.0
+        logic_err_rate = (n_logic / n_total) if n_total else 0.0
+
+        # Conditional reasoning metrics
+        fmt_given_not_trunc = (n_fmt / non_truncated) if non_truncated > 0 else 0.0
+        pass_given_parsed = (n_pass / parsed) if parsed > 0 else 0.0
+        logic_given_parsed = (n_logic / parsed) if parsed > 0 else 0.0
 
         results_q.put(
             {
@@ -381,9 +432,16 @@ def vllm_worker_persistent(
                 "rep3_ratios": rep3_ratios,
                 "pred_answers": pred_answers,
                 "correct": correct_flags,
-                # aggregates
-                "accuracy": float(sum(correct_flags) / max(len(correct_flags), 1)),
-                "truncation_rate": float(sum(trunc_flags) / max(len(trunc_flags), 1)),
+                "format_errors": fmt_error_flags,
+                "logic_errors": logic_error_flags,
+                # aggregates (system-level & conditional)
+                "pass_at_1": float(pass_at_1),
+                "trunc_rate": float(trunc_rate),
+                "fmt_err_rate": float(fmt_err_rate),
+                "logic_err_rate": float(logic_err_rate),
+                "fmt_given_not_trunc": float(fmt_given_not_trunc),
+                "pass_given_parsed": float(pass_given_parsed),
+                "logic_given_parsed": float(logic_given_parsed),
                 "length_p50": float(p50),
                 "length_p95": float(p95),
                 "toks_per_sec": float(toks_per_sec),

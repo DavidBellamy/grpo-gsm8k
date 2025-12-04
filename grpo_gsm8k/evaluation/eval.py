@@ -325,7 +325,7 @@ def run_gsm8k_eval(
     results = []
     truncated_count = 0  # track how often generation hits max_tokens limit
 
-    # New counters for error taxonomy
+    # Counters for error taxonomy
     format_error_count = 0
     logic_error_count = 0
     non_truncated_count = 0
