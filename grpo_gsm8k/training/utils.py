@@ -474,6 +474,25 @@ def save_policy_checkpoint_for_vllm(
         - pytorch_model.safetensors
         - READY (marker)
     """
+    # Clear out_root upfront (remove any old checkpoints)
+    try:
+        _root = Path(out_root)
+        if _root.exists() and _root.is_dir():
+            for p in _root.glob(f"{base}_*"):
+                # skip non-dirs (safety) and tmp directories that aren't owned by this process
+                if not p.is_dir():
+                    continue
+                try:
+                    shutil.rmtree(p)
+                    if logger:
+                        logger.info("Removed existing vLLM checkpoint during startup: %s", p)
+                except Exception as e:
+                    if logger:
+                        logger.warning("Failed to remove %s during startup cleanup: %s", p, e)
+    except Exception as e:
+        if logger:
+            logger.warning("Error while clearing %s: %s", out_root, e)
+
     out_root = Path(out_root)
     tmp_dir = out_root / f"{base}_{step}.tmp"
     final_dir = out_root / f"{base}_{step}"
