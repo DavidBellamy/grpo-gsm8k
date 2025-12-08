@@ -2,7 +2,7 @@
 
 A comparison of the efficacy of popular post-training algorithms for improving math abilities of language models. Specifically, supervised fine-tuning (SFT), REINFORCE (with and without a baseline) and DeepSeek's Group Relative Policy Optimization (GRPO) with Qwen2.5-Math-1.5B on GSM8k problems. Only two GPUs are needed – one for inference, one for training. lm-eval is used to check for capability regressions. Bootstrap confidence intervals are computed for key comparisons.
 
-For independent engineers/researchers interested in post-training, this repo can get you started on a personal budget. See [RunPod Instructions](#runpod-instructions).
+For independent engineers/researchers interested in post-training without torch wrappers, this repo can get you started on a personal budget. See [RunPod Instructions](#runpod-instructions).
 
 ---
 
