@@ -1,6 +1,8 @@
-# SFT vs RL for Math Reasoning
+# Post-Training Small Math Language Models
 
 A comparison of the efficacy of popular post-training algorithms for improving math abilities of language models. Specifically, supervised fine-tuning (SFT), REINFORCE (with and without a baseline) and DeepSeek's Group Relative Policy Optimization (GRPO) with Qwen2.5-Math-1.5B on GSM8k problems. Only two GPUs are needed – one for inference, one for training. lm-eval is used to check for capability regressions. Bootstrap confidence intervals are computed for key comparisons.
+
+For independent engineers/researchers interested in post-training, this repo can get you started on a personal budget. See [RunPod Instructions](#runpod-instructions).
 
 ---
 
@@ -135,16 +137,15 @@ On the first pod you deploy, configure your git info:
 
 | Task | Command |
 |------|---------|
-| Install runtime | uv sync |
-| Install runtime + dev | uv sync --dev |
-| Editable install | uv pip  install -e . |
 | Run tests | pytest |
 | Lint | ruff check . |
 | Format | ruff format . |
 | Type-check | mypy grpo_gsm8k |
 
+Note: ruff and mypy are both run automatically as pre-commit hooks.
+
 ---
 
 ## License
 
-MIT — see `LICENSE`.
+MIT — see [LICENSE](LICENSE).
