@@ -5,7 +5,7 @@ output_dir: ./artifacts/eval
 
 gsm8k_eval_path: artifacts/gsm8k/test.jsonl
 gsm8k_max_tokens: 1536
-gsm8k_k_shot: 0
+gsm8k_k_shot: 8
 gsm8k_bootstrap_samples: 1000  # costs little time/compute
 gsm8k_ci_alpha: 0.05
 

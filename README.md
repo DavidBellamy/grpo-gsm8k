@@ -77,6 +77,8 @@ This command runs the eval suite, which includes a custom Qwen-friendly GSM8k ev
 
 By default, this command evaluates Qwen's Qwen2.5-Math-1.5B base model on the entire eval suite. A local model checkpoint can be evaluated by overriding the `model_path` field in [conf/eval/default.yaml](conf/eval/default.yaml). By default, GSM8k evaluation is done with k=8 shot CoT prompting and lm-eval tasks use k=4 shot. Both values of k can be modified in the config. If you only wish to run the GSM8k eval, override the `eval_suites` field with 'gsm8k'. If you only wish to run the lm-eval suite, override `eval_suites` with 'lm_eval'. You can also run just specific lm-eval tasks by either changing the `lm_eval_tasks` field or overriding the `eval_suites` field with the specific name of an lm-eval task.
 
+The GSM8k eval uses data parallel to distribute the job across available GPUs. Set `num_shards` in [conf/eval/default.yaml](conf/eval/default.yaml) to specify the number of available GPUs. lm-eval is distributed with task parallelism.
+
 ## Manual lm-eval Evaluation
 
 Spinning up a vLLM instance is slow so it is quicker to do development with a persistent vLLM server. For that, you can do the following.

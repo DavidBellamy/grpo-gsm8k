@@ -263,12 +263,12 @@ def train_policy_gradient(
       - optimizer step after accumulating a target number of episodes
     """
     assert episodes_per_update % group_size == 0, "group_size must divide episodes_per_update."
-    assert trainer_episodes_per_mb >= group_size, (
-        "trainer_episodes_per_mb must be larger than group_size"
-    )
-    assert trainer_episodes_per_mb % group_size == 0, (
-        "group_size must divide trainer_episodes_per_mb"
-    )
+    assert (
+        trainer_episodes_per_mb >= group_size
+    ), "trainer_episodes_per_mb must be larger than group_size"
+    assert (
+        trainer_episodes_per_mb % group_size == 0
+    ), "group_size must divide trainer_episodes_per_mb"
 
     # Replay/record guard
     if replay_path is not None and record_replay_path is not None:
@@ -576,19 +576,19 @@ def train_policy_gradient(
 
                 # Aggregate rollout-level metrics to log once per optimizer update
                 batch_size_for_metrics = len(result.get("responses", [])) or 1
-                w = float(batch_size_for_metrics)
-                train_metric_weight_sum += w
+                metric_wt = float(batch_size_for_metrics)
+                train_metric_weight_sum += metric_wt
 
                 # Use result keys consistent with sft.py; fall back if older names exist
-                sum_pass_at_1 += float(result.get("pass_at_1", 0.0)) * w
-                sum_trunc_rate += float(
-                    result.get("trunc_rate", result.get("truncation_rate", 0.0))
-                ) * w
-                sum_fmt_err_rate += float(result.get("fmt_err_rate", 0.0)) * w
-                sum_logic_err_rate += float(result.get("logic_err_rate", 0.0)) * w
-                sum_fmt_given_not_trunc += float(result.get("fmt_given_not_trunc", 0.0)) * w
-                sum_pass_given_parsed += float(result.get("pass_given_parsed", 0.0)) * w
-                sum_logic_given_parsed += float(result.get("logic_given_parsed", 0.0)) * w
+                sum_pass_at_1 += float(result.get("pass_at_1", 0.0)) * metric_wt
+                sum_trunc_rate += (
+                    float(result.get("trunc_rate", result.get("truncation_rate", 0.0))) * metric_wt
+                )
+                sum_fmt_err_rate += float(result.get("fmt_err_rate", 0.0)) * metric_wt
+                sum_logic_err_rate += float(result.get("logic_err_rate", 0.0)) * metric_wt
+                sum_fmt_given_not_trunc += float(result.get("fmt_given_not_trunc", 0.0)) * metric_wt
+                sum_pass_given_parsed += float(result.get("pass_given_parsed", 0.0)) * metric_wt
+                sum_logic_given_parsed += float(result.get("logic_given_parsed", 0.0)) * metric_wt
 
                 responses = result["responses"]  # length = len(prompts_mb) * group_size
                 gold_repeated = result["answers"]
@@ -873,22 +873,16 @@ def train_policy_gradient(
             metrics[f"{train_title}/wt_clip_frac"] = float(
                 sum_ratio_clipped / max(1, clip_frac_cnt)
             )
-        
+
         if train_metric_weight_sum > 0.0:
-            w = float(train_metric_weight_sum)
-            metrics[f"{train_title}/pass_at_1"] = float(sum_pass_at_1 / w)
-            metrics[f"{train_title}/trunc_rate"] = float(sum_trunc_rate / w)
-            metrics[f"{train_title}/fmt_err_rate"] = float(sum_fmt_err_rate / w)
-            metrics[f"{train_title}/logic_err_rate"] = float(sum_logic_err_rate / w)
-            metrics[f"{train_title}/fmt_given_not_trunc"] = float(
-                sum_fmt_given_not_trunc / w
-            )
-            metrics[f"{train_title}/pass_given_parsed"] = float(
-                sum_pass_given_parsed / w
-            )
-            metrics[f"{train_title}/logic_given_parsed"] = float(
-                sum_logic_given_parsed / w
-            )
+            wt = float(train_metric_weight_sum)
+            metrics[f"{train_title}/pass_at_1"] = float(sum_pass_at_1 / wt)
+            metrics[f"{train_title}/trunc_rate"] = float(sum_trunc_rate / wt)
+            metrics[f"{train_title}/fmt_err_rate"] = float(sum_fmt_err_rate / wt)
+            metrics[f"{train_title}/logic_err_rate"] = float(sum_logic_err_rate / wt)
+            metrics[f"{train_title}/fmt_given_not_trunc"] = float(sum_fmt_given_not_trunc / wt)
+            metrics[f"{train_title}/pass_given_parsed"] = float(sum_pass_given_parsed / wt)
+            metrics[f"{train_title}/logic_given_parsed"] = float(sum_logic_given_parsed / wt)
         wandb.log(metrics)
 
         # Periodic async eval (skip in replay mode since vLLM is not active)
