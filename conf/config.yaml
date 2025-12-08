@@ -1,5 +1,6 @@
 defaults:
   - wandb: default
+  - policy_gradient: default
   - sft: default
   - eval: default
   - data: default

@@ -11,3 +11,8 @@ template_val:
   infile: artifacts/gsm8k/val.jsonl
   model_id: Qwen/Qwen2.5-Math-1.5B
   outfile: artifacts/processed/val_templated.jsonl
+
+template_train:
+  infile: artifacts/gsm8k/train.jsonl
+  model_id: Qwen/Qwen2.5-Math-1.5B
+  outfile: artifacts/processed/train_templated.jsonl
