@@ -1,9 +1,10 @@
 # Repo-specific
 artifacts/*
 .python-version
-wandb/
+/wandb/
 .DS_Store
 logs/
+.github/copilot-instructions.md
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
