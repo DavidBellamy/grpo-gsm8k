@@ -530,6 +530,8 @@ def run_lm_eval(
     num_fewshot: int,
     batch_size: int,
     max_new_tokens: int,
+    temperature: float,
+    top_p: float,
     limit: int | None,
     output_dir: Path,
     is_local_checkpoint: bool,
@@ -587,6 +589,8 @@ def run_lm_eval(
         f"tokenizer={actual_tokenizer_path},"
         f"tokenizer_backend=huggingface",
         f"max_tokens={max_new_tokens}",
+        f"temperature={temperature}",
+        f"top_p={top_p}",
     )
 
     # Prepare output path
@@ -1000,6 +1004,8 @@ def main(
                         num_fewshot=lm_eval_fewshot,
                         batch_size=lm_eval_batch_size,
                         max_new_tokens=lm_eval_max_tokens,
+                        temperature=temperature,
+                        top_p=top_p,
                         limit=limit,
                         output_dir=output_path,
                         is_local_checkpoint=is_local_checkpoint,
