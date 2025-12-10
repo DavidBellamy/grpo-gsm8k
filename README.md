@@ -1,5 +1,9 @@
 # Post-Training Small Math Language Models
 
+By [David Bellamy](davidbellamy.github.io).
+
+[![Weights & Biases](https://img.shields.io/badge/Weights%20%26%20Biases-view%20project-yellow)](https://wandb.ai/username/projectname)
+
 A comparison of the efficacy of popular post-training algorithms for improving math abilities of language models. Specifically, supervised fine-tuning (SFT), REINFORCE (with and without a baseline) and DeepSeek's Group Relative Policy Optimization (GRPO) with Qwen2.5-Math-1.5B on GSM8k problems. Only two GPUs are needed – one for inference, one for training. lm-eval is used to check for capability regressions. Bootstrap confidence intervals are computed for key comparisons.
 
 For independent engineers/researchers interested in post-training without torch wrappers, this repo can get you started on a personal budget. See [RunPod Instructions](#runpod-instructions).
@@ -73,7 +77,7 @@ Just as with SFT, after `eval_every` steps, the trainer GPU sends a model checkp
 
 ## Command: Eval
 
-This command runs the eval suite, which includes a custom Qwen-friendly GSM8k evaluation with k-shot CoT prompting as well as lm-eval tasks: hendrycks_math, mmlu, arc_challenge, hellaswag, winogrande, truthfulqa_mc2, and wikitext.
+This command runs the eval suite, which includes a custom Qwen-friendly GSM8k evaluation with k-shot CoT prompting as well as lm-eval tasks: hendrycks_math500, mmlu, arc_challenge, hellaswag, winogrande, truthfulqa_mc2, and wikitext.
 
 By default, this command evaluates Qwen's Qwen2.5-Math-1.5B base model on the entire eval suite. A local model checkpoint can be evaluated by overriding the `model_path` field in [conf/eval/default.yaml](conf/eval/default.yaml). By default, GSM8k evaluation is done with k=8 shot CoT prompting and lm-eval tasks use k=4 shot. Both values of k can be modified in the config. If you only wish to run the GSM8k eval, override the `eval_suites` field with 'gsm8k'. If you only wish to run the lm-eval suite, override `eval_suites` with 'lm_eval'. You can also run just specific lm-eval tasks by either changing the `lm_eval_tasks` field or overriding the `eval_suites` field with the specific name of an lm-eval task.
 
@@ -98,7 +102,7 @@ Then run lm-eval against that server, either with a public model:
 python -m lm_eval \
 --model local-completions \
 --model_args "model=qwen/qwen2.5-math-1.5b,base_url=http://127.0.0.1:8000/v1/completions,num_concurrent=10,tokenized_requests=True,tokenizer_backend=huggingface,max_length=4096" \
---tasks hendrycks_math,mmlu,arc_challenge,hellaswag,winogrande,truthfulqa_mc2,wikitext \
+--tasks hendrycks_math500,mmlu,arc_challenge,hellaswag,winogrande,truthfulqa_mc2,wikitext \
 --num_fewshot 4 \
 --batch_size 8 \
 --gen_kwargs '{"temperature":0,"do_sample":false,"max_new_tokens":2048}' \
@@ -114,7 +118,7 @@ export TOKENIZER_ABS="path/to/your/checkpoints/tokenizer"
 python -m lm_eval \
 --model local-completions \
 --model_args "base_url=http://127.0.0.1:8000/v1/completions,model={your_model_name},num_concurrent=10,tokenized_requests=False,tokenizer=${TOKENIZER_ABS},tokenizer_backend=huggingface,max_length=4096" \
---tasks hendrycks_math,mmlu,arc_challenge,hellaswag,winogrande,truthfulqa_mc2,wikitext \
+--tasks hendrycks_math500,mmlu,arc_challenge,hellaswag,winogrande,truthfulqa_mc2,wikitext \
 --num_fewshot 4 \
 --batch_size 8 \
 --gen_kwargs '{"temperature":0,"do_sample":false,"max_new_tokens":2048}' \

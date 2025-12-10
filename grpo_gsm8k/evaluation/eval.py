@@ -699,15 +699,15 @@ def assign_lm_eval_tasks_to_shard(
 
     # Heuristic costs based on empirical/runtime ranking:
     # truthfulqa_mc2 < winogrande ≲ arc_challenge < hellaswag
-    # < wikitext ≲ mmlu ≲ hendrycks_math
+    # < hendrycks_math500 < wikitext ≲ mmlu
     task_cost: dict[str, int] = {
         "truthfulqa_mc2": 1,
         "winogrande": 2,
         "arc_challenge": 2,
         "hellaswag": 3,
+        "hendrycks_math500": 4,
         "wikitext": 4,
         "mmlu": 5,
-        "hendrycks_math": 6,
     }
 
     # Sort tasks by descending cost so we place heavy ones first
@@ -868,7 +868,7 @@ def main(
     # Default lm-eval tasks
     if lm_eval_tasks is None:
         lm_eval_tasks = [
-            "hendrycks_math",
+            "hendrycks_math500",
             "mmlu",
             "arc_challenge",
             "hellaswag",
@@ -1053,7 +1053,7 @@ def main(
                     row_values: list[str] = [
                         model_path,
                         _metric_or_empty("mmlu", ["acc,none", "acc"]),
-                        _metric_or_empty("hendrycks_math", ["exact_match,none", "exact_match"]),
+                        _metric_or_empty("hendrycks_math500", ["exact_match,none", "exact_match"]),
                         _metric_or_empty("arc_challenge", ["acc_norm,none", "acc_norm"]),
                         _metric_or_empty("hellaswag", ["acc_norm,none", "acc_norm"]),
                         _metric_or_empty("truthfulqa_mc2", ["acc,none", "acc"]),

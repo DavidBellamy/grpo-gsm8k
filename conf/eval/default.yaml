@@ -1,5 +1,5 @@
 model_path: Qwen/Qwen2.5-Math-1.5B
-eval_suites: [all]  # options: gsm8k, lm_eval, all, hendrycks_math, mmlu, arc_challenge, hellaswag, winogrande, truthfulqa_mc2, wikitext
+eval_suites: [all]  # options: gsm8k, lm_eval, all, hendrycks_math500, mmlu, arc_challenge, hellaswag, winogrande, truthfulqa_mc2, wikitext
 limit: null
 output_dir: ./artifacts/eval
 
@@ -10,7 +10,7 @@ gsm8k_bootstrap_samples: 1000  # costs little time/compute
 gsm8k_ci_alpha: 0.05
 
 lm_eval_tasks:
-  - hendrycks_math
+  - hendrycks_math500
   - mmlu
   - arc_challenge
   - hellaswag
