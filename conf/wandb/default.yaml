@@ -1,4 +1,4 @@
 # @package wandb
 project: grpo-gsm8k
 entity: null
-run_name: ${project}_${now:%Y-%m-%d_%H-%M-%S}
+run_name: ${wandb.project}_${now:%Y-%m-%d_%H-%M-%S}
