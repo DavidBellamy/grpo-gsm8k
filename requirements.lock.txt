@@ -388,9 +388,9 @@ llvmlite==0.44.0 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:07667d66a5d150abed9157ab6c0b9393c9356f229784a4385c02f99e94fc94d4 \
     --hash=sha256:7202b678cdf904823c764ee0fe2dfe38a76981f4c1e51715b4cb5abb6cf1d9e8
     # via numba
-lm-eval==0.4.9.1 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
-    --hash=sha256:315e5a3af7a600c8e4240e059e132376d6582538e1aa6484ccba647f6ea3fae9 \
-    --hash=sha256:e87ea4e9b37ef6fd30c45f0885fab4dfedce2660089a4e8da0b203c0e5b93597
+lm-eval==0.4.9.2 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
+    --hash=sha256:131c2f21911beee92e6ab8286f08adce86d6aa23852f87451651e6a68b4a631a \
+    --hash=sha256:b8d12410ab9c6321c9e26a9fb7e13a4e1b920ed4907905804dc2e231b7482a6e
     # via grpo-gsm8k
 lm-format-enforcer==0.10.12 ; platform_machine == 'x86_64' and sys_platform == 'linux' \
     --hash=sha256:130bd7ce8a6b224f25b6314ba9ae78ee4b48594db1767c74391c9182e2902a6c \

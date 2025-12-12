@@ -917,8 +917,6 @@ def main(
     logger.info(f"  Eval suites: {eval_suites}")
     logger.info(f"  Limit: {limit}")
 
-    logger.info(f"  Limit: {limit}")
-
     # Build per-run eval folder: artifacts/eval/{YYYYMMDD}_{wandb_run}
     # use pid if wandb is disabled
     date_str = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d")
