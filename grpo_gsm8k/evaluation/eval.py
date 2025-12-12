@@ -5,6 +5,7 @@ import datetime
 import json
 import logging
 import math
+import numbers
 import os
 import random
 import re
@@ -1019,7 +1020,7 @@ def main(
                             continue
                         to_log = {}
                         for metric_name, val in metrics.items():
-                            if isinstance(val, int | float):
+                            if isinstance(val, numbers.Real):
                                 # keep the original metric name to stay 1:1 with lm-eval
                                 to_log[f"metrics/lm_eval/{task}/{metric_name}"] = val
                         if to_log:
@@ -1034,7 +1035,7 @@ def main(
                                 if mk in task_dict and isinstance(task_dict[mk], int | float):
                                     v = task_dict[mk]
                                     break
-                        return f"{float(v):.4f}" if isinstance(v, int | float) else ""
+                        return f"{float(v):.4f}" if isinstance(v, numbers.Real) else ""
 
                     lm_cols: list[str] = [
                         "Model ID",
