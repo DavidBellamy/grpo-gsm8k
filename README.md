@@ -1,6 +1,6 @@
 # Post-Training Small Math Language Models
 
-By [David Bellamy](davidbellamy.github.io).
+By [David Bellamy](https://davidbellamy.github.io/).
 
 [![Weights & Biases](https://img.shields.io/badge/Weights%20%26%20Biases-view%20project-yellow)](https://wandb.ai/username/projectname)
 
