@@ -102,9 +102,7 @@ def _ngram_repetition_ratio(token_ids: list[int], n: int = 3) -> float:
     for i in range(total):
         ng = tuple(token_ids[i : i + n])
         c = seen.get(ng, 0)
-        if c == 1:
-            dup += 1  # count second occurrence as duplication start
-        elif c > 1:
+        if c >= 1:
             dup += 1
         seen[ng] = c + 1
     return dup / total if total > 0 else 0.0
