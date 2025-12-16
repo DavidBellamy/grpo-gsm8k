@@ -44,20 +44,21 @@ def main(
     top_p: float,
     out_csv: Path,
     limit: int | None,
+    first_tokens: int,
 ) -> None:
     rows = load_jsonl(val_path)
     if limit is not None:
-        rows = rows[: limit]
+        rows = rows[:limit]
 
     # Tokenizer path: for HF id, use it; for local ckpt dir, try its tokenizer subdir; else fallback
     model_path = model
     model_dir = Path(model_path)
     if model_dir.exists() and model_dir.is_dir():
-        tok_path = (
+        tok_path: Path = (
             model_dir / "tokenizer" if (model_dir / "tokenizer").exists() else model_dir  # fallback
         )
     else:
-        tok_path = model_path
+        tok_path = Path(model_path)
 
     tok = AutoTokenizer.from_pretrained(str(tok_path), use_fast=True)
     if tok.pad_token_id is None:
@@ -97,11 +98,10 @@ def main(
         )
         w.writeheader()
 
-        # Batch generate to leverage vLLM, but compute metrics per prompt
-        # We iterate prompts to keep the per-prompt grouping clear.
-        for i, (p, r) in enumerate(zip(prompts, rows)):
-            outs = llm.generate([p], samp)
-            choice_groups = outs[0].outputs  # list of n choices for this prompt
+        # Generate for all prompts in one batched call, then compute per-prompt metrics
+        outs = llm.generate(prompts, samp)
+        for i, (out, r) in enumerate(zip(outs, rows)):
+            choice_groups = out.outputs  # list of n choices for this prompt
 
             # Collect token ids (fall back to tokenizing text if ids unavailable)
             per_sample_trigrams: list[set[tuple[int, int, int]]] = []
@@ -114,6 +114,9 @@ def main(
                     # Fallback: tokenize generated text
                     text = ch.text or ""
                     toks = tok.encode(text, add_special_tokens=False)
+                # Only consider the first L tokens of the completion
+                if first_tokens > 0:
+                    toks = toks[:first_tokens]
                 tri = trigrams(toks)
                 per_sample_trigrams.append(set(tri))
                 union_trigrams.extend(tri)
@@ -152,9 +155,10 @@ def main(
     print(f"Wrote metrics to {out_csv}")
 
 
-def _cli() -> None:
+def _parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser(
-        description="Sample M completions per GSM8k validation prompt with vLLM and compute distinct-3 and average Jaccard across trigrams."
+        description="Sample M completions per GSM8k validation prompt with vLLM and compute "
+        "distinct-3 and average Jaccard across trigrams."
     )
     ap.add_argument(
         "--val-path",
@@ -168,14 +172,23 @@ def _cli() -> None:
         default="Qwen/Qwen2.5-Math-1.5B",
         help="HF model id or local checkpoint directory under artifacts/checkpoints/",
     )
-    ap.add_argument("--m", type=int, default=5, help="Number of samples per prompt")
-    ap.add_argument("--max-new-tokens", type=int, default=1024)
-    ap.add_argument("--temperature", type=float, default=1.0)
+    ap.add_argument("--m", type=int, default=16, help="Number of samples per prompt")
+    ap.add_argument("--max-new-tokens", type=int, default=2048)
+    ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--top-p", type=float, default=1.0)
     ap.add_argument("--out-csv", type=Path, default=Path("artifacts/mode_collapse_val.csv"))
     ap.add_argument("--limit", type=int, default=None, help="Limit number of prompts")
-    args = ap.parse_args()
+    ap.add_argument(
+        "--first-tokens",
+        type=int,
+        default=256,
+        help="Compute metrics using only the first L tokens of each completion (default: 256)",
+    )
+    return ap.parse_args()
 
+
+if __name__ == "__main__":
+    args = _parse_args()
     main(
         val_path=args.val_path,
         model=args.model,
@@ -185,8 +198,5 @@ def _cli() -> None:
         top_p=args.top_p,
         out_csv=args.out_csv,
         limit=args.limit,
+        first_tokens=args.first_tokens,
     )
-
-
-if __name__ == "__main__":
-    _cli()
