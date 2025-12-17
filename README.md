@@ -1,13 +1,15 @@
-# Post-Training Small Math Language Models
+# Post-Training Math Language Models
 [![vLLM](https://img.shields.io/badge/built%20with-vLLM-5C2D91)](https://github.com/vllm-project/vllm)
 [![PyTorch](https://img.shields.io/badge/PyTorch-powered-EE4C2C)](https://pytorch.org)
 [![Weights & Biases](https://img.shields.io/badge/Weights%20%26%20Biases-view%20project-yellow)](https://wandb.ai/davidbellamy/grpo-gsm8k/reports/Hitting-the-Noise-Floor-SFT-vs-GRPO-Clip-on-GSM8k--VmlldzoxNTMyMDUyMQ?accessToken=6rlc5h70yx8bu4td297yqk8qbyurmk6zrvcd3gt2k00gmn2gtluj2hljh62006is)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 By [David Bellamy](https://davidbellamy.github.io/).
 
 ![Reward Plot](./assets/grpo_reward.png)
 
-A comparison of the efficacy of popular post-training algorithms for improving math abilities of language models. Specifically, supervised fine-tuning (SFT), REINFORCE (with and without a baseline) and DeepSeek's Group Relative Policy Optimization (GRPO) with Qwen2.5-Math-1.5B on GSM8k problems. Only two GPUs are needed – one for inference, one for training. lm-eval is used to check for capability regressions. Bootstrap confidence intervals are computed for key comparisons.
+Bare-metal implementation of DeepSeek-R1 Group Relative Policy Optimization (GRPO) on GSM8k using pure PyTorch & vLLM. Enables the comparison of the efficacy of popular post-training algorithms for improving math abilities of language models. Specifically, supervised fine-tuning (SFT), REINFORCE (with and without a baseline) and DeepSeek's Group Relative Policy Optimization (GRPO) with Qwen2.5-Math-1.5B on GSM8k problems. Only two GPUs are needed – one for inference, one for training. lm-eval is used to check for capability regressions. Bootstrap confidence intervals are computed for key comparisons.
 
 For independent engineers/researchers interested in post-training without torch wrappers, this repo can get you started on a personal budget. See [RunPod Instructions](#runpod-instructions).
 
