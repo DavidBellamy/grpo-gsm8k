@@ -1,8 +1,9 @@
 # Post-Training Small Math Language Models
+[![vLLM](https://img.shields.io/badge/built%20with-vLLM-5C2D91)](https://github.com/vllm-project/vllm)
+[![PyTorch](https://img.shields.io/badge/PyTorch-powered-EE4C2C)](https://pytorch.org)
+[![Weights & Biases](https://img.shields.io/badge/Weights%20%26%20Biases-view%20project-yellow)](https://wandb.ai/davidbellamy/grpo-gsm8k/reports/Hitting-the-Noise-Floor-SFT-vs-GRPO-Clip-on-GSM8k--VmlldzoxNTMyMDUyMQ?accessToken=6rlc5h70yx8bu4td297yqk8qbyurmk6zrvcd3gt2k00gmn2gtluj2hljh62006is)
 
 By [David Bellamy](https://davidbellamy.github.io/).
-
-[![Weights & Biases](https://img.shields.io/badge/Weights%20%26%20Biases-view%20project-yellow)](https://wandb.ai/davidbellamy/grpo-gsm8k/reports/Hitting-the-Noise-Floor-SFT-vs-GRPO-Clip-on-GSM8k--VmlldzoxNTMyMDUyMQ?accessToken=6rlc5h70yx8bu4td297yqk8qbyurmk6zrvcd3gt2k00gmn2gtluj2hljh62006is)
 
 ![Reward Plot](./assets/grpo_reward.png)
 
